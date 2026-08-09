@@ -38,6 +38,56 @@ def test_missing_evidence_is_unverified():
     assert "no factory_gate.json" in reasons[0]
 
 
+def test_mutation_score_reads_snapshot_artifact(tmp_path):
+    """The mutation column is derived from mutation_score.json, not asserted."""
+    repo = tmp_path / "agent-reach"
+    (repo / "artifacts" / "hygiene").mkdir(parents=True)
+    (repo / "artifacts" / "hygiene" / "mutation_score.json").write_text(
+        json.dumps({"score_pct": 63.6}), encoding="utf-8")
+    assert sr.mutation_score(repo) == 63.6
+
+
+def test_mutation_score_none_when_artifact_missing(tmp_path):
+    """No mutation evidence -> None, rendered as '-' in the table."""
+    repo = tmp_path / "nexus"
+    (repo / "artifacts" / "hygiene").mkdir(parents=True)
+    assert sr.mutation_score(repo) is None
+
+
+def test_build_status_includes_mutation_column(tmp_path):
+    """build_status surfaces the mutation score per project."""
+    ar = tmp_path / "agent-reach"
+    (ar / "artifacts" / "hygiene").mkdir(parents=True)
+    (ar / "artifacts" / "hygiene" / "factory_gate.json").write_text(
+        json.dumps(_gate()), encoding="utf-8")
+    (ar / "artifacts" / "hygiene" / "hygiene_aggregate.json").write_text(
+        json.dumps(_agg()), encoding="utf-8")
+    (ar / "artifacts" / "hygiene" / "mutation_score.json").write_text(
+        json.dumps({"score_pct": 63.6}), encoding="utf-8")
+    nx = tmp_path / "nexus"
+    (nx / "artifacts" / "hygiene").mkdir(parents=True)
+    (nx / "artifacts" / "hygiene" / "factory_gate.json").write_text(
+        json.dumps(_gate()), encoding="utf-8")
+    (nx / "artifacts" / "hygiene" / "hygiene_aggregate.json").write_text(
+        json.dumps(_agg()), encoding="utf-8")
+
+    old = sr.PROJECTS
+    sr.PROJECTS = [
+        {"name": "agent-reach", "repo": str(ar), "slug": "x/ar"},
+        {"name": "nexus", "repo": str(nx), "slug": "x/nx"},
+    ]
+    try:
+        status = sr.build_status(with_ci=False)
+        by_name = {p["project"]: p for p in status["projects"]}
+        assert by_name["agent-reach"]["mutation_score_pct"] == 63.6
+        assert by_name["nexus"]["mutation_score_pct"] is None
+        md = sr.render_markdown(status)
+        assert "| 63.6% |" in md
+        assert "| - |" in md  # nexus renders '-' for the missing mutation
+    finally:
+        sr.PROJECTS = old
+
+
 def test_gate_fail_is_failing():
     state, _ = sr.derive_state(_gate("FAIL"), _agg(), 0.0, time.time(),
                                sr.DEFAULT_STALE_DAYS * 86400)

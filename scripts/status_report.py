@@ -142,6 +142,18 @@ def gate_unknowns(gate: dict | None) -> int | None:
     return len(unknowns) if isinstance(unknowns, list) else None
 
 
+def mutation_score(repo: Path) -> float | None:
+    """Mutation score % from <repo>/artifacts/hygiene/mutation_score.json.
+
+    Produced by the project's own mutation_score_snapshot.py (zero-spend
+    read of mutmut's verdict files). None when the project has no mutation
+    evidence at all.
+    """
+    snap = read_json(repo / "artifacts" / "hygiene" / "mutation_score.json")
+    score = snap.get("score_pct") if snap else None
+    return score if isinstance(score, (int, float)) else None
+
+
 def derive_state(gate: dict | None, aggregate: dict | None,
                  commit_ts: float | None, gate_mtime: float,
                  stale_seconds: int) -> tuple[str, list[str]]:
@@ -183,6 +195,7 @@ def build_status(with_ci: bool = False, stale_seconds: int = DEFAULT_STALE_DAYS 
             "state": state,
             "gate": gate_verdict(gate),
             "hygiene": (aggregate or {}).get("factory_verdict"),
+            "mutation_score_pct": mutation_score(repo),
             "pytest_passed": pytest_passed,
             "pytest_summary": pytest_summary,
             "unresolved_unknowns": gate_unknowns(gate),
@@ -219,13 +232,16 @@ def render_markdown(status: dict) -> str:
         "",
         f"Aggregate verdict: **{status['verdict']}**",
         "",
-        "| Project | State | Gate | Hygiene | pytest | Evidence age | CI (last run) |",
-        "|---|---|---|---|---|---|---|",
+        "| Project | State | Gate | Hygiene | Mutation | pytest | Evidence age | CI (last run) |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for p in status["projects"]:
+        mutation = p.get("mutation_score_pct")
+        mutation_cell = f"{mutation}%" if mutation is not None else "-"
         lines.append(
             f"| {p['project']} | **{p['state']}** | {p['gate'] or '-'} | "
-            f"{p['hygiene'] or '-'} | {p['pytest_passed'] if p['pytest_passed'] is not None else '-'} | "
+            f"{p['hygiene'] or '-'} | {mutation_cell} | "
+            f"{p['pytest_passed'] if p['pytest_passed'] is not None else '-'} | "
             f"{p['evidence_age_h']}h | {p.get('ci') or '-'} |"
         )
     lines.append("")
