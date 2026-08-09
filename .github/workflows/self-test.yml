@@ -38,12 +38,14 @@ jobs:
         with:
           repository: lordwilsonDev/domain-router
           token: ${{ secrets.GH_PAT }}
-          path: ../domain-router
+          # Must live INSIDE the workspace: actions/checkout rejects paths
+          # outside $GITHUB_WORKSPACE (../ was rejected on the first run).
+          path: domain-router
 
       - name: run_factory.py --self-test (three env boundaries)
         run: python scripts/run_factory.py --self-test
 
       - name: Enforcement tests + d03 scrub-list sync guard
         env:
-          D03_RUNNER_PATH: ${{ github.workspace }}/../domain-router/scripts/hygiene/d03_orchestration_smoke_runner.py
+          D03_RUNNER_PATH: ${{ github.workspace }}/domain-router/scripts/hygiene/d03_orchestration_smoke_runner.py
         run: python -m pytest tests/ -q
