@@ -42,6 +42,16 @@ jobs:
           # outside $GITHUB_WORKSPACE (../ was rejected on the first run).
           path: domain-router
 
+      - name: Checkout nexus (full-gate sample; needs GH_PAT secret)
+        if: ${{ env.GH_PAT != '' }}
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        uses: actions/checkout@v4
+        with:
+          repository: lordwilsonDev/nexus
+          token: ${{ secrets.GH_PAT }}
+          path: nexus
+
       - name: run_factory.py --self-test (three env boundaries)
         run: python scripts/run_factory.py --self-test
 
@@ -49,3 +59,19 @@ jobs:
         env:
           D03_RUNNER_PATH: ${{ github.workspace }}/domain-router/scripts/hygiene/d03_orchestration_smoke_runner.py
         run: python -m pytest tests/ -q
+
+      # Whole-loop proof: run the REAL gate end-to-end against a sample
+      # project (nexus: 4 pytest tests + n01-n03 hygiene suite, live_auth
+      # scoped out — no server needed). This exercises run_pytest,
+      # run_suite, _extract_json_object, build_gate and the gate JSON write
+      # exactly as production uses them, on every push.
+      - name: Full factory gate on nexus (whole loop end-to-end)
+        if: ${{ env.GH_PAT != '' }}
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+          MSB_REPO: ${{ github.workspace }}/nexus
+          MSB_PYTHON: python
+        run: |
+          pip install -q pytest fastapi uvicorn rich prompt-toolkit pyyaml ollama
+          python scripts/run_factory.py --project "${{ github.workspace }}/nexus"
+          python -c "import json; g=json.load(open('${{ github.workspace }}/nexus/artifacts/hygiene/factory_gate.json'))['RELEASE_VERDICT']; print('gate:', g['release_verdict'], '| regression:', g['regression_passed'], '| violations:', g['artifact_schema_violations'], '| unknowns:', len(g['unresolved_unknowns'])); assert g['release_verdict']=='PASS', 'full gate not PASS'"
