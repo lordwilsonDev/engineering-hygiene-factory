@@ -97,6 +97,11 @@ _SELF_TEST_CHILD = (
     "    print('HAS' if n in os.environ else 'CLEAN', n)\n"
 )
 
+# The one internal secret the factory legitimately uses: the live-auth probe
+# reads it from os.environ (in-process urllib) and the h02 server boot needs
+# it in subprocess envs. It must NEVER be treated like a paid credential.
+_INTERNAL_SECRET = "MCP_BRIDGE_SECRET"
+
 
 def _spawn(args: list[str], project: Path | None = None,
            timeout: int = 900) -> subprocess.CompletedProcess:
@@ -119,39 +124,94 @@ def self_test() -> int:
     """Canary — enforce the zero-spend guarantee as a test, not a one-off check.
 
     Forces every scrubbed credential name into os.environ (saving prior
-    values), then proves BOTH that `_zero_spend_env()` drops them AND that a
-    real subprocess spawned with that env cannot see any of them. Internal
-    secrets and PATH must survive. Exit 0 = guarantee enforced, 1 = broken.
+    values) alongside an internal MCP_BRIDGE_SECRET, then proves THREE
+    boundaries:
 
-    Meaningful with sentinel keys exported:
-        DEEPSEEK_API_KEY=x python run_factory.py --self-test
+    1. `_zero_spend_env()` drops every paid credential.
+    2. A real subprocess spawned through `_spawn` (the same choke point the
+       gates use) sees every paid credential as CLEAN but the internal
+       MCP_BRIDGE_SECRET as HAS — paid keys never reach subprocesses, the
+       internal secret always does.
+    3. The live-auth probe runs IN-PROCESS (urllib against os.environ, not a
+       subprocess), so it carries MCP_BRIDGE_SECRET in its correct-secret
+       request — while paid keys exist only in the probe's env, never in any
+       subprocess env. Proved by capturing the exact headers the real
+       `verify_live_auth` builds.
+
+    Exit 0 = all boundaries enforced, 1 = broken.
     """
-    saved = {k: os.environ.get(k) for k in ZERO_SPEND_ENV_VARS}
+    saved = {k: os.environ.get(k) for k in (*ZERO_SPEND_ENV_VARS, _INTERNAL_SECRET)}
     for k in ZERO_SPEND_ENV_VARS:
         os.environ[k] = "self-test-sentinel"
+    os.environ[_INTERNAL_SECRET] = "self-test-secret"
     failures: list[str] = []
     try:
         env, stripped = _zero_spend_env()
-        # Parent side: scrubbed names gone, internals preserved.
+        # 1. Parent side: scrubbed names gone, internals preserved.
         for k in ZERO_SPEND_ENV_VARS:
             if k in env:
                 failures.append(f"credential {k} survived _zero_spend_env()")
-        for k in ("PATH", "MCP_BRIDGE_SECRET", "MSB_RAG_API_KEY", "OLLAMA_MODEL"):
+        for k in ("PATH", _INTERNAL_SECRET, "MSB_RAG_API_KEY", "OLLAMA_MODEL"):
             if k in os.environ and k not in env:
                 failures.append(f"internal {k} was scrubbed (must survive)")
-        # Child side: a real spawned subprocess through the SAME choke point
-        # the gates use (_spawn) must not see any scrubbed name. This is what
-        # makes the canary test the wiring, not just the helper.
-        child = _spawn([PY, "-c", _SELF_TEST_CHILD, *ZERO_SPEND_ENV_VARS], timeout=30)
+
+        # 2. Child side: spawned through the SAME choke point the gates use
+        # (_spawn). Paid names must be CLEAN; the internal secret must be HAS.
+        names = [*ZERO_SPEND_ENV_VARS, _INTERNAL_SECRET]
+        child = _spawn([PY, "-c", _SELF_TEST_CHILD, *names], timeout=30)
         if child.returncode != 0:
             failures.append(f"self-test child crashed: {(child.stderr or '').strip()[:200]}")
         lines = child.stdout.splitlines()
-        if len(lines) != len(ZERO_SPEND_ENV_VARS):
-            failures.append(f"self-test child emitted {len(lines)} lines, expected {len(ZERO_SPEND_ENV_VARS)}")
+        if len(lines) != len(names):
+            failures.append(f"self-test child emitted {len(lines)} lines, expected {len(names)}")
         for line in lines:
             state, _, name = line.partition(" ")
-            if state == "HAS":
+            if name == _INTERNAL_SECRET:
+                if state != "HAS":
+                    failures.append(f"internal {_INTERNAL_SECRET} did NOT reach subprocess env (must survive)")
+            elif state == "HAS":
                 failures.append(f"credential {name} leaked into spawned subprocess env")
+
+        # 3. Probe boundary: verify_live_auth is in-process urllib — it reads
+        # MCP_BRIDGE_SECRET straight from os.environ and must carry it in the
+        # correct-secret request. Capture the exact headers it sends (no
+        # network: urlopen is stubbed; a nonexistent project forces the
+        # os.environ fallback path).
+        sent_headers: list[str | None] = []
+
+        def _capture_probe(req, timeout=None):
+            # urllib capitalizes header keys (x-mcp-secret -> X-mcp-secret),
+            # so read case-insensitively.
+            sent_headers.append(
+                next((v for k, v in req.headers.items() if k.lower() == "x-mcp-secret"), None)
+            )
+
+            class _Resp:
+                status = 200
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *exc):
+                    return False
+
+            return _Resp()
+
+        saved_urlopen = urllib_request.urlopen
+        urllib_request.urlopen = _capture_probe
+        try:
+            verify_live_auth(Path("/definitely-not-a-project"), live_auth=True)
+        finally:
+            urllib_request.urlopen = saved_urlopen
+        if len(sent_headers) != 3:
+            failures.append(f"probe sent {len(sent_headers)} requests, expected 3 (correct/wrong/missing)")
+        else:
+            if sent_headers[0] != "self-test-secret":
+                failures.append(f"probe correct-secret request carried {sent_headers[0]!r}, expected the internal secret")
+            if sent_headers[1] != "definitely-wrong-secret":
+                failures.append(f"probe wrong-secret request carried {sent_headers[1]!r}")
+            if sent_headers[2] is not None:
+                failures.append(f"probe missing-secret request unexpectedly carried a header ({sent_headers[2]!r})")
     finally:
         for k, v in saved.items():
             if v is None:
@@ -163,8 +223,8 @@ def self_test() -> int:
             print(f"[self-test] FAIL: {f}")
         print(f"[self-test] {len(failures)} failure(s) — zero-spend guarantee BROKEN")
         return 1
-    print(f"[self-test] OK: {stripped} credentials stripped and invisible to "
-          f"spawned subprocesses; internals + PATH preserved")
+    print(f"[self-test] OK: {stripped} paid credentials stripped + invisible to subprocesses; "
+          f"{_INTERNAL_SECRET} reaches subprocesses AND the in-process probe; internals + PATH preserved")
     return 0
 
 # Member skills this factory can run for a project with the msb-v3 hygiene suite.
@@ -485,7 +545,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Engineering hygiene factory orchestrator")
     parser.add_argument("--project", type=Path, default=DEFAULT_PROJECT)
     parser.add_argument("--self-test", action="store_true",
-                        help="canary: prove scrubbed credentials never reach a spawned subprocess")
+                        help="canary: prove scrubbed credentials never reach subprocesses and the probe env is isolated")
     args = parser.parse_args()
     if args.self_test:
         return self_test()
