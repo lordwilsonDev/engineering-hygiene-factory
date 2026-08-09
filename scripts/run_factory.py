@@ -208,10 +208,14 @@ def self_test() -> int:
         else:
             if sent_headers[0] != "self-test-secret":
                 failures.append(f"probe correct-secret request carried {sent_headers[0]!r}, expected the internal secret")
+            # Coupled to verify_live_auth's literal wrong-secret value — asserts
+            # exact wire behavior on purpose.
             if sent_headers[1] != "definitely-wrong-secret":
                 failures.append(f"probe wrong-secret request carried {sent_headers[1]!r}")
             if sent_headers[2] is not None:
                 failures.append(f"probe missing-secret request unexpectedly carried a header ({sent_headers[2]!r})")
+    except Exception as exc:  # canary must fail loudly and legibly, never a raw traceback
+        failures.append(f"unexpected error during self-test: {type(exc).__name__}: {exc}")
     finally:
         for k, v in saved.items():
             if v is None:
