@@ -75,3 +75,13 @@ jobs:
           pip install -q pytest fastapi uvicorn rich prompt-toolkit pyyaml ollama
           python scripts/run_factory.py --project "${{ github.workspace }}/nexus"
           python -c "import json; g=json.load(open('${{ github.workspace }}/nexus/artifacts/hygiene/factory_gate.json'))['RELEASE_VERDICT']; print('gate:', g['release_verdict'], '| regression:', g['regression_passed'], '| violations:', g['artifact_schema_violations'], '| unknowns:', len(g['unresolved_unknowns'])); assert g['release_verdict']=='PASS', 'full gate not PASS'"
+
+      # Meta-move canary: status is DERIVED from evidence, never asserted.
+      # --check exits 1 if any project whose artifacts are PRESENT (here:
+      # domain-router + nexus, checked out above) is FAILING; absent
+      # projects report UNVERIFIED and are non-fatal. Also proves the
+      # generator emits a well-formed status.json.
+      - name: Status canary (derive, don't assert)
+        run: |
+          python scripts/status_report.py --check
+          python -c "import json; d=json.load(open('artifacts/status/status.json')); assert d['projects'], 'status.json must list projects'; print('status.json OK — aggregate:', d['verdict'])"
