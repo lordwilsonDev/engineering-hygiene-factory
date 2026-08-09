@@ -123,3 +123,42 @@ def test_status_json_written_by_cli(tmp_path, monkeypatch):
     payload = json.loads((tmp_path / "artifacts" / "status" / "status.json").read_text())
     assert payload["verdict"] in ("UNVERIFIED", "VERIFIED")
     assert payload["projects"] == []
+
+
+def test_check_ignores_unverified_but_strict_does_not(tmp_path, monkeypatch):
+    """--check is the CI canary (absent projects non-fatal); --strict is the
+    local constellation-wide gate (anything below VERIFIED is fatal)."""
+    msb = tmp_path / "msb-v3"
+    (msb / "artifacts" / "hygiene").mkdir(parents=True)
+    (msb / "artifacts" / "hygiene" / "factory_gate.json").write_text(
+        json.dumps(_gate("FAIL")), encoding="utf-8")
+    (msb / "artifacts" / "hygiene" / "hygiene_aggregate.json").write_text(
+        json.dumps(_agg()), encoding="utf-8")
+    ghost = tmp_path / "ghost"  # exists on disk but has NO evidence at all
+
+    old = sr.PROJECTS
+    sr.PROJECTS = [
+        {"name": "msb-v3", "repo": str(msb), "slug": "x/msb"},
+        {"name": "ghost", "repo": str(ghost), "slug": "x/ghost"},
+    ]
+    try:
+        status = sr.build_status(with_ci=False)
+        by_name = {p["project"]: p for p in status["projects"]}
+        assert by_name["ghost"]["state"] == "UNVERIFIED"
+        assert by_name["msb-v3"]["state"] == "FAILING"
+
+        # --check: only FAILING is fatal; UNVERIFIED ghost is tolerated.
+        assert sr.main(["--check"]) == 1
+        # --strict: UNVERIFIED alone is fatal even without any FAILING project.
+        sr.PROJECTS = [{"name": "ghost", "repo": str(ghost), "slug": "x/ghost"}]
+        assert sr.main(["--strict"]) == 1
+        # A fully verified tree passes strict.
+        sr.PROJECTS = [{"name": "msb-v3", "repo": str(msb), "slug": "x/msb"}]
+        (msb / "artifacts" / "hygiene" / "factory_gate.json").write_text(
+            json.dumps(_gate()), encoding="utf-8")  # verdict back to PASS
+        fresh = time.time()
+        os_utime = __import__("os").utime
+        os_utime(msb / "artifacts" / "hygiene" / "factory_gate.json", (fresh, fresh))
+        assert sr.main(["--strict"]) == 0
+    finally:
+        sr.PROJECTS = old

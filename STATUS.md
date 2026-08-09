@@ -1,6 +1,6 @@
 # Constellation Status (derived from evidence)
 
-Generated: `2026-08-09T22:06:21.493101+00:00` by `scripts/status_report.py`
+Generated: `2026-08-09T22:37:23.531065+00:00` by `scripts/status_report.py`
 
 **Nothing here is asserted — every state is derived from each project's `artifacts/hygiene/` gate artifacts and freshness vs its last git commit.** Missing or stale evidence shows as UNVERIFIED/STALE.
 
@@ -8,12 +8,12 @@ Aggregate verdict: **UNVERIFIED**
 
 | Project | State | Gate | Hygiene | pytest | Evidence age | CI (last run) |
 |---|---|---|---|---|---|---|
-| msb-v3 | **STALE** | PASS | pass | True | 0.3h | success |
-| agent-reach | **VERIFIED** | PASS | pass | True | 2.1h | - |
-| sovereign-mcp-os | **VERIFIED** | PASS | pass | True | 2.1h | success |
-| sovereign-outcome-engine | **VERIFIED** | PASS | pass | True | 2.1h | success |
-| nexus | **VERIFIED** | PASS | pass | True | 1.5h | success |
-| domain-router | **VERIFIED** | PASS | pass | True | 0.1h | - |
+| msb-v3 | **STALE** | PASS | pass | True | 0.8h | success |
+| agent-reach | **STALE** | PASS | pass | True | 2.6h | - |
+| sovereign-mcp-os | **VERIFIED** | PASS | pass | True | 2.6h | success |
+| sovereign-outcome-engine | **STALE** | PASS | pass | True | 2.6h | failure |
+| nexus | **STALE** | PASS | pass | True | 2.0h | failure |
+| domain-router | **VERIFIED** | PASS | pass | True | 0.6h | - |
 | skill-orchestration-os | **UNVERIFIED** | - | - | - | Noneh | - |
 
 ## pytest summaries
@@ -26,10 +26,10 @@ Aggregate verdict: **UNVERIFIED**
 
 ## Why
 - `msb-v3`: gate artifact predates last commit
-- `agent-reach`: gate PASS, artifact age 2h
+- `agent-reach`: gate artifact predates last commit
 - `sovereign-mcp-os`: gate PASS, artifact age 2h
-- `sovereign-outcome-engine`: gate PASS, artifact age 2h
-- `nexus`: gate PASS, artifact age 1h
+- `sovereign-outcome-engine`: gate artifact predates last commit
+- `nexus`: gate artifact predates last commit
 - `domain-router`: gate PASS, artifact age 0h
 - `skill-orchestration-os`: no factory_gate.json artifact
 

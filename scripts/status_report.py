@@ -20,6 +20,9 @@ Status derivation (the only truth table):
 `--check` exits 1 if any project whose artifacts are PRESENT is FAILING (or
 the generator itself errors) — the CI canary. Absent projects are reported
 UNVERIFIED, not fatal (CI runners only have some repos checked out).
+`--strict` is the local, constellation-wide variant: exits 1 on ANY state
+below VERIFIED (FAILING, UNVERIFIED, STALE) — use it where all repos exist
+and "not red" must mean "green and current".
 
 Outputs: <factory>/STATUS.md (human) + <factory>/artifacts/status/status.json
 (machine). Optional `--with-ci` appends the last GitHub Actions factory-gate
@@ -248,6 +251,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Derive constellation status from evidence")
     parser.add_argument("--check", action="store_true",
                         help="exit 1 if any present project is FAILING or the generator errors")
+    parser.add_argument("--strict", action="store_true",
+                        help="exit 1 if ANY project is below VERIFIED (FAILING/UNVERIFIED/STALE)")
     parser.add_argument("--with-ci", action="store_true",
                         help="append last GitHub factory-gate conclusion per project (needs gh)")
     parser.add_argument("--stale-days", type=int, default=DEFAULT_STALE_DAYS,
@@ -272,12 +277,18 @@ def main(argv: list[str] | None = None) -> int:
               f"hygiene={p['hygiene'] or '-':8s} age={p['evidence_age_h']}h")
 
     if args.check:
-        failing = [p["project"] for p in status["projects"]
-                   if p["state"] == "FAILING"]
+        failing = [p["project"] for p in status["projects"] if p["state"] == "FAILING"]
         if failing:
             print(f"check FAILED: present projects in FAILING state: {failing}")
             return 1
         print("check PASSED: no present project is FAILING")
+    if args.strict:
+        below = [p["project"] for p in status["projects"]
+                 if _STATUS_WEIGHT[p["state"]] < _STATUS_WEIGHT["VERIFIED"]]
+        if below:
+            print(f"strict FAILED: projects below VERIFIED (FAILING/UNVERIFIED/STALE): {below}")
+            return 1
+        print("strict PASSED: every project is VERIFIED")
     return 0
 
 
