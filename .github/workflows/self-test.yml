@@ -30,8 +30,20 @@ jobs:
       - name: Install pytest
         run: pip install --upgrade pip pytest
 
+      - name: Checkout domain-router (d03 sync guard; needs GH_PAT secret)
+        if: ${{ env.GH_PAT != '' }}
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        uses: actions/checkout@v4
+        with:
+          repository: lordwilsonDev/domain-router
+          token: ${{ secrets.GH_PAT }}
+          path: ../domain-router
+
       - name: run_factory.py --self-test (three env boundaries)
         run: python scripts/run_factory.py --self-test
 
-      - name: Enforcement tests (leaky _spawn must fail the canary)
+      - name: Enforcement tests + d03 scrub-list sync guard
+        env:
+          D03_RUNNER_PATH: ${{ github.workspace }}/../domain-router/scripts/hygiene/d03_orchestration_smoke_runner.py
         run: python -m pytest tests/ -q
