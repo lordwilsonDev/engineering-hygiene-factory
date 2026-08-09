@@ -1,0 +1,37 @@
+name: self-test
+
+# Zero-spend canary + enforcement tests for the engineering-hygiene factory.
+# Runs on every push to main, on a daily schedule, and manually. Fail-fast: a
+# broken scrub, a leaking `_spawn` choke point, or a regression in the
+# live-auth probe env isolation must be caught the moment it lands.
+#
+# The canary (`run_factory.py --self-test`) is stdlib-only and needs NO
+# secrets — it injects its own sentinel credentials. The enforcement tests
+# need pytest. No API keys are used, required, or reachable here.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "30 6 * * *"   # daily 06:30 UTC
+  workflow_dispatch:
+
+jobs:
+  canary:
+    name: zero-spend canary + enforcement tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pytest
+        run: pip install --upgrade pip pytest
+
+      - name: run_factory.py --self-test (three env boundaries)
+        run: python scripts/run_factory.py --self-test
+
+      - name: Enforcement tests (leaky _spawn must fail the canary)
+        run: python -m pytest tests/ -q
