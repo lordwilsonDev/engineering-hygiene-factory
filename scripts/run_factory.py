@@ -49,7 +49,10 @@ from schema_validate import validate_artifact_file
 
 FACTORY_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_PROJECT = Path(os.environ.get("MSB_REPO", Path.home() / "msb-v3"))
-PY = os.environ.get("MSB_PYTHON", "/opt/homebrew/Caskroom/miniforge/base/bin/python")
+# The interpreter used for spawned subprocesses: MSB_PYTHON overrides, else
+# the interpreter actually running the factory (portable — the hardcoded
+# macOS path was caught by the CI canary on its first run).
+PY = os.environ.get("MSB_PYTHON", sys.executable)
 
 # Paid-API credential env vars that must NEVER reach a subprocess the gate
 # spawns. The gate runs the project's real pytest suite and hygiene runners;
