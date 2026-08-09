@@ -1,0 +1,24 @@
+name: skill-generation
+description: Generate or load hygiene skills from risk surface.
+inputs:
+  - RISK_MAP
+  - SKILL_REGISTRY
+phases:
+  - name: match
+    actions:
+      - match risks to existing skills
+      - record SKILL_SELECTION_REASON
+  - name: create
+    actions:
+      - create missing skills
+      - validate skill contract format
+      - store in skills/
+outputs:
+  - SKILL_PLAN
+  - NEW_SKILLS
+rules:
+  - invalid_examples:
+      - "Check security"
+    valid_examples:
+      - "Attempt these five defined security boundary violations and record whether each request is rejected, accepted, or causes unauthorized mutation"
+  - every skill must have measurable exit criteria

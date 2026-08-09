@@ -1,0 +1,78 @@
+{
+  "claims": [
+    {
+      "id": "SEC-001",
+      "statement": "/mcp endpoints reject requests without valid x-mcp-secret",
+      "status": "TESTED",
+      "evidence_refs": [
+        "h11_auth_bypass_2026-08-09T11:10:04.812199"
+      ],
+      "experiments": [
+        "H11"
+      ],
+      "severity": "critical"
+    },
+    {
+      "id": "SEC-002",
+      "statement": "Audit chain detects text alteration",
+      "status": "OBSERVED",
+      "evidence_refs": [],
+      "experiments": [
+        "H06"
+      ],
+      "severity": "high"
+    },
+    {
+      "id": "SEC-003",
+      "statement": "Audit chain recovers from detected tampering",
+      "status": "FALSIFIED",
+      "evidence_refs": [],
+      "experiments": [
+        "H06"
+      ],
+      "severity": "high"
+    },
+    {
+      "id": "SEC-004",
+      "statement": "/register rejects payloads > N bytes",
+      "status": "TESTED",
+      "evidence_refs": [
+        "h10_resource_chaos_2026-08-09T11:10:04.814983"
+      ],
+      "experiments": [
+        "H10"
+      ],
+      "severity": "medium"
+    },
+    {
+      "id": "SEC-005",
+      "statement": "Truth registry directory removal triggers graceful degradation",
+      "status": "TESTED",
+      "evidence_refs": [],
+      "experiments": [
+        "H09"
+      ],
+      "severity": "medium"
+    },
+    {
+      "id": "SEC-006",
+      "statement": "Idempotent replay does not duplicate truth entries",
+      "status": "TESTED",
+      "evidence_refs": [],
+      "experiments": [
+        "H03"
+      ],
+      "severity": "low"
+    },
+    {
+      "id": "SEC-007",
+      "statement": "System survives controlled restart without state loss",
+      "status": "TESTED",
+      "evidence_refs": [],
+      "experiments": [
+        "H02"
+      ],
+      "severity": "high"
+    }
+  ]
+}

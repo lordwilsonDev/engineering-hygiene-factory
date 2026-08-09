@@ -1,0 +1,30 @@
+---
+name: skill
+fields:
+  - id: id
+    type: string
+    required: true
+  - id: family
+    type: string
+    required: true
+  - id: purpose
+    type: string
+    required: true
+  - id: scope
+    type: string
+    required: true
+  - id: inputs
+    type: array[string]
+    required: true
+  - id: experiments
+    type: array[string]
+    required: true
+  - id: evidence_required
+    type: array[string]
+    required: true
+  - id: exit_criteria
+    type: array[string]
+    required: true
+  - id: artifacts
+    type: array[string]
+    required: true

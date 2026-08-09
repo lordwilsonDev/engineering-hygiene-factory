@@ -1,0 +1,29 @@
+name: release
+description: Release gate with evidence-backed verdict.
+inputs:
+  - EVIDENCE_INDEX
+  - REGRESSION_RESULTS
+verdicts:
+  - PASS
+  - PASS_WITH_RISK
+  - BLOCKED
+  - FAILED
+  - UNKNOWN
+gate_conditions:
+  critical_requirements_tested: true
+  critical_invariants_verified: true
+  critical_failures_resolved: true
+  security_boundaries_tested: true
+  state_recovery_tested: true
+  important_failure_modes_have_experiments: true
+  claims_have_evidence: true
+  regression_passed: true
+  reproducibility_documented: true
+  unresolved_unknowns_disclosed: true
+outputs:
+  - RELEASE_VERDICT.json
+  - UNRESOLVED_UNKNOWNs.md
+  - NEXT_ATTACKS.md
+rules:
+  - never convert UNKNOWN into PASS
+  - distinguish PASS from PASS_WITH_RISK explicitly

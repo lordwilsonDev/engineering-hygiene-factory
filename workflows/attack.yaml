@@ -1,0 +1,30 @@
+name: attack
+description: Execute hygiene experiments as an assembly line.
+inputs:
+  - SKILL_PLAN
+  - BASELINE
+loop:
+  for each skill:
+    1. discover
+    2. define experiment
+    3. establish expected behavior
+    4. execute
+    5. capture evidence
+    6. compare actual vs expected
+    7. classify result
+    8. create finding if failed
+    9. determine severity
+    10. determine repairability
+    11. repair only when authorized
+    12. re-run experiment
+    13. run regression tests
+    14. record final result
+outputs:
+  - EXPERIMENTS/
+  - FINDINGS.json
+  - REPAIRS.json
+  - REGRESSION_RESULTS.json
+rules:
+  - never skip evidence collection
+  - record 13-field evidence schema per experiment
+  - auto-healing: maximize verified recovery, minimize unauthorized intervention

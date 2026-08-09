@@ -1,0 +1,37 @@
+---
+name: verdict
+fields:
+  - id: release_verdict
+    type: string
+    required: true
+    enum: [PASS, PASS_WITH_RISK, BLOCKED, FAILED, UNKNOWN]
+  - id: critical_requirements_tested
+    type: boolean
+    required: true
+  - id: critical_invariants_verified
+    type: boolean
+    required: true
+  - id: critical_failures_resolved
+    type: boolean
+    required: true
+  - id: security_boundaries_tested
+    type: boolean
+    required: true
+  - id: state_recovery_tested
+    type: boolean
+    required: true
+  - id: important_failure_modes_have_experiments
+    type: boolean
+    required: true
+  - id: claims_have_evidence
+    type: boolean
+    required: true
+  - id: regression_passed
+    type: boolean
+    required: true
+  - id: reproducibility_documented
+    type: boolean
+    required: true
+  - id: unresolved_unknowns_disclosed
+    type: boolean
+    required: true

@@ -1,0 +1,15 @@
+name: evidence
+description: Evidence audit before declaring completion.
+inputs:
+  - EXPERIMENTS
+  - FINDINGS
+  - REPAIRS
+actions:
+  - for each claim: verify CLAIM, SOURCE, COMMAND, ARTIFACT, RESULT, TIMESTAMP, COMMIT, STATUS
+  - reject claims that cannot be demonstrated
+  - ignore future/planned work when calculating maturity
+outputs:
+  - EVIDENCE_INDEX.json
+rules:
+  - every material claim requires evidence
+  - UNKNOWN must remain UNKNOWN

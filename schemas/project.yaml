@@ -1,0 +1,63 @@
+---
+name: project
+fields:
+  - id: project_id
+    type: string
+    required: true
+  - id: name
+    type: string
+    required: true
+  - id: root
+    type: string
+    required: true
+  - id: languages
+    type: array[string]
+    required: true
+  - id: frameworks
+    type: array[string]
+    required: false
+  - id: services
+    type: array[string]
+    required: false
+  - id: apis
+    type: array[string]
+    required: false
+  - id: databases
+    type: array[string]
+    required: false
+  - id: queues
+    type: array[string]
+    required: false
+  - id: dependencies
+    type: array[string]
+    required: false
+  - id: agents
+    type: array[string]
+    required: false
+  - id: mcp_servers
+    type: array[string]
+    required: false
+  - id: deployment
+    type: string
+    required: false
+  - id: test_infrastructure
+    type: string
+    required: false
+  - id: persistence
+    type: array[string]
+    required: false
+  - id: mutation_surfaces
+    type: array[string]
+    required: false
+  - id: security_boundaries
+    type: array[string]
+    required: false
+  - id: automation
+    type: array[string]
+    required: false
+  - id: self_healing
+    type: array[string]
+    required: false
+  - id: discovered_at
+    type: string
+    required: true

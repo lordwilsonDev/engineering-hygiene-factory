@@ -1,0 +1,21 @@
+name: baseline
+description: Capture project baseline before attacking.
+inputs:
+  - project_root
+  - SKILL_PLAN
+captures:
+  - test_suite_results
+  - test_failures
+  - warnings
+  - performance_metrics
+  - resource_usage
+  - git_state
+  - dependency_state
+  - configuration
+  - current_artifacts
+  - claimed_capabilities
+outputs:
+  - BASELINE.json
+rules:
+  - never compare future state against undocumented baseline
+  - record commit hash and timestamp

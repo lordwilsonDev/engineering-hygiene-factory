@@ -1,0 +1,21 @@
+security_evidence:
+  required:
+    - experiment_id
+    - claim_ids
+    - timestamp
+    - target
+    - mutation
+    - observer_results
+    - recovery_action
+    - restoration_verified
+    - verdict
+    - confidence
+    - errors
+    - proposed_status_transitions
+  optional:
+    - security_findings:
+        - cwe_id
+        - severity
+        - exploitability
+        - remediation
+  artifact_path: artifacts/hygiene/<experiment_id>_<timestamp>.json

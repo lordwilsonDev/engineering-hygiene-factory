@@ -1,0 +1,49 @@
+---
+name: experiment
+fields:
+  - id: experiment_id
+    type: string
+    required: true
+  - id: skill
+    type: string
+    required: true
+  - id: input
+    type: string
+    required: true
+  - id: environment
+    type: string
+    required: true
+  - id: failure_injected
+    type: string
+    required: false
+  - id: expected_behavior
+    type: string
+    required: true
+  - id: actual_behavior
+    type: string
+    required: true
+  - id: latency_ms
+    type: number
+    required: false
+  - id: errors
+    type: array[string]
+    required: true
+  - id: state_before
+    type: object
+    required: true
+  - id: state_after
+    type: object
+    required: true
+  - id: recovery
+    type: string
+    required: true
+  - id: false_repair
+    type: boolean
+    required: true
+  - id: evidence
+    type: array[string]
+    required: true
+  - id: verdict
+    type: string
+    required: true
+    enum: [pass, fail, blocked, unknown]

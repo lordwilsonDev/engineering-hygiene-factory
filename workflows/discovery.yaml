@@ -1,0 +1,26 @@
+name: discovery
+description: Project archaeology workflow - inspect before proposing changes.
+inputs:
+  - project_root
+phases:
+  - name: structure
+    actions:
+      - enumerate files/directories
+      - identify entrypoints
+      - detect languages/frameworks
+  - name: surfaces
+    actions:
+      - map APIs/MCP servers
+      - map persistence
+      - map mutation surfaces
+      - map security boundaries
+  - name: claims
+    actions:
+      - extract README/SPEC/DOC claims
+      - classify as KNOWN/OBSERVED/TESTED/INFERRED/ASSUMED/UNKNOWN
+outputs:
+  - PROJECT_MAP
+  - CLAIM_REGISTRY
+  - RISK_SURFACES
+safety:
+  - read-only unless explicitly authorized
