@@ -30,13 +30,23 @@ def _get_suite_floor(repo_root: Path) -> int:
 
 
 def _get_ci_floor(repo_root: Path) -> int | None:
-    workflows_dir = repo_root / ".github" / "workflows"
-    if not workflows_dir.exists():
+    """The coverage gate lives in the factory-gate workflow.
+
+    Only scan .github/workflows/factory-gate.yml (the workflow that runs the
+    coverage gate), and only match RUN lines (indented under a `run:` block),
+    never comments. Repos may carry other workflows (e.g. ci.yml) whose own
+    fail-under must not be compared against the suite floor.
+    """
+    gate_yml = repo_root / ".github" / "workflows" / "factory-gate.yml"
+    if not gate_yml.exists():
         return None
-    
-    for yml in workflows_dir.glob("*.yml"):
-        content = yml.read_text(encoding="utf-8")
-        match = re.search(r"--(?:cov-)?fail-under=(\d+)", content)
+    for line in gate_yml.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        # pytest-cov uses --cov-fail-under; the coverage CLI uses --fail-under
+        # (SOE's subprocess-coverage gate). Both express the floor as a percent.
+        match = re.search(r"--(?:cov-)?fail-under=(\d+)", stripped)
         if match:
             return int(match.group(1))
     return None
