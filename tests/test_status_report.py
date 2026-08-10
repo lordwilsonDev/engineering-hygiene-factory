@@ -407,6 +407,40 @@ def test_code_head_excludes_evidence_commits(tmp_path):
     assert sr.code_head(repo) == code_hash
 
 
+def test_evidence_commit_under_business_dir_keeps_verified(tmp_path, monkeypatch):
+    """Regression: the exclusion covers the WHOLE artifacts/ tree, so evidence
+    committed in any subdir (e.g. SOE claim containers under
+    artifacts/business/) must not move code HEAD or flip the repo STALE —
+    the exact incident the widened exclusion fixed."""
+    repo = _make_repo(tmp_path)
+    (repo / "app.py").write_text("x = 1\n", encoding="utf-8")
+    _git(repo, "add", "app.py")
+    _git(repo, "commit", "-q", "-m", "code")
+    code_hash = sr.code_head(repo)
+    code_ts = sr.last_commit_time(repo)
+
+    _plant_gate(repo)
+    # Emit a claim container under a NON-hygiene evidence subdir (like SOE).
+    biz = repo / "artifacts" / "business"
+    biz.mkdir(parents=True)
+    (biz / "claim_container_ferree.json").write_text(
+        json.dumps({"deliverable_id": "x", "claims": []}), encoding="utf-8")
+    _git(repo, "add", "artifacts")
+    _git(repo, "commit", "-q", "-m", "business claim container evidence")
+
+    # Committing evidence under artifacts/business/ is NOT a code commit.
+    assert sr.code_head(repo) == code_hash
+    assert sr.last_commit_time(repo) == code_ts
+
+    old = sr.PROJECTS
+    sr.PROJECTS = [{"name": "p", "repo": str(repo), "slug": "x/p"}]
+    try:
+        status = sr.build_status(with_ci=False)
+        assert status["projects"][0]["state"] == "VERIFIED"
+    finally:
+        sr.PROJECTS = old
+
+
 def test_repo_root_empty_env_falls_back_to_home(tmp_path, monkeypatch):
     """MSB_STATUS_HOME set-but-empty must not rebase repos onto cwd."""
     monkeypatch.setenv("MSB_STATUS_HOME", "   ")

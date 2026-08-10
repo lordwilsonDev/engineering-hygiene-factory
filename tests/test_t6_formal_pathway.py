@@ -40,7 +40,7 @@ def _valid_formal_artifact() -> dict:
         "technique": "bounded model check",
         "claims": ["claim:state_machine:invariant"],
         "result": "PASS",
-        "artifact_hashes": {"src/state_machine.py": "sha256:0123456789abcdef0123456789abcdef"},
+        "artifact_hashes": {"src/state_machine.py": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
     }
 
 
@@ -106,6 +106,36 @@ def test_short_hashes_fail_closed(tmp_path: Path) -> None:
     path.parent.mkdir(parents=True)
     artifact = _valid_formal_artifact()
     artifact["artifact_hashes"] = {"src/state_machine.py": "abc"}  # too short
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+    assert sr.formal_verification(tmp_path) is False
+
+
+def test_non_sha_digest_fails_closed(tmp_path: Path) -> None:
+    """A 64-char but non-hex digest is not a real hash binding."""
+    path = tmp_path / "artifacts" / "hygiene" / sr.FORMAL_ARTIFACT
+    path.parent.mkdir(parents=True)
+    artifact = _valid_formal_artifact()
+    artifact["artifact_hashes"] = {"src/state_machine.py": "z" * 64}  # not hex
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+    assert sr.formal_verification(tmp_path) is False
+
+
+def test_empty_claims_fail_closed(tmp_path: Path) -> None:
+    """A formal artifact that claims nothing was checked cannot unlock T6."""
+    path = tmp_path / "artifacts" / "hygiene" / sr.FORMAL_ARTIFACT
+    path.parent.mkdir(parents=True)
+    artifact = _valid_formal_artifact()
+    artifact["claims"] = []
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+    assert sr.formal_verification(tmp_path) is False
+
+
+def test_blank_tool_fails_closed(tmp_path: Path) -> None:
+    """An unnamed tool/technique is not a formal method."""
+    path = tmp_path / "artifacts" / "hygiene" / sr.FORMAL_ARTIFACT
+    path.parent.mkdir(parents=True)
+    artifact = _valid_formal_artifact()
+    artifact["tool"] = "   "
     path.write_text(json.dumps(artifact), encoding="utf-8")
     assert sr.formal_verification(tmp_path) is False
 

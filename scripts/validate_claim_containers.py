@@ -39,6 +39,12 @@ import sys
 from pathlib import Path
 
 VALID_TIERS = {f"T{i}" for i in range(7)}
+# Ledger verdict enum (status_report.py states + the blueprint's claim states).
+# A claim verdict outside this set is an assertion the ledger never made.
+VALID_VERDICTS = {
+    "VERIFIED", "FAILING", "STALE", "UNVERIFIED", "REGRESSED", "CONTESTED",
+    "INCONCLUSIVE", "UNKNOWN",
+}
 REQUIRED_TOP = {"deliverable_id", "deliverable_type", "produced_by", "generated_at", "claims"}
 REQUIRED_CLAIM = {"claim_id", "subject", "claim_type", "assertion",
                   "verification_tier", "verdict", "evidence", "evaluated_at"}
@@ -73,6 +79,9 @@ def validate_container(path: Path, repo_root: Path | None = None) -> dict:
         tier = c.get("verification_tier")
         if tier not in VALID_TIERS:
             violations.append(f"{label}.verification_tier={tier!r} not in T0..T6")
+        verdict = c.get("verdict")
+        if not isinstance(verdict, str) or verdict.upper() not in VALID_VERDICTS:
+            violations.append(f"{label}.verdict={verdict!r} not in ledger verdict enum")
         evidence = c.get("evidence")
         if not isinstance(evidence, list) or not evidence:
             violations.append(f"{label}.evidence must be a non-empty list")

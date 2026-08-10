@@ -96,6 +96,19 @@ def test_invalid_tier_fails(tmp_path: Path) -> None:
     assert any("T0..T6" in v for v in report["violations"]), report
 
 
+def test_made_up_verdict_fails(tmp_path: Path) -> None:
+    """A claim verdict outside the ledger enum is an assertion the ledger
+    never made — rejected, never silently accepted."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    path = repo / "claim_container_x.json"
+    c = _valid_container(repo)
+    c["claims"][0]["verdict"] = "TOTALLY_GREEN_MADE_UP"
+    _write(c, path)
+    report = validate_container(path, repo_root=repo)
+    assert any("verdict" in v and "enum" in v for v in report["violations"]), report
+
+
 def test_missing_evidence_file_fails(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()

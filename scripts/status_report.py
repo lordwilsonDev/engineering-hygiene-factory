@@ -367,11 +367,26 @@ def formal_verification(repo: Path) -> bool:
     result = data.get("result")
     if not isinstance(result, str) or result.upper() != "PASS":
         return False
+    # The claims field must declare WHAT was formally checked — an empty list
+    # is a claim that nothing was verified, which is not formal verification
+    # of anything (fail closed: empty claims can never unlock T6).
+    claims = data.get("claims")
+    if not isinstance(claims, list) or not claims:
+        return False
+    if not all(isinstance(c, str) and c.strip() for c in claims):
+        return False
+    # The tool/technique must be named — an empty string is not a method.
+    for field in ("tool", "technique"):
+        if not isinstance(data.get(field), str) or not data[field].strip():
+            return False
     hashes = data.get("artifact_hashes")
     if not isinstance(hashes, dict) or not hashes:
         return False
+    # Real SHA-256 digests are 64 hex chars; require a genuine digest, not a
+    # short token (T6 is meant to be hard to reach).
     for digest in hashes.values():
-        if not isinstance(digest, str) or len(digest) < 16:
+        if (not isinstance(digest, str) or len(digest) != 64
+                or any(c not in "0123456789abcdef" for c in digest.lower())):
             return False
     return True
 
