@@ -1,6 +1,6 @@
 # Constellation Status (derived from evidence)
 
-Generated: `2026-08-09T23:43:59.709554+00:00` by `scripts/status_report.py`
+Generated: `2026-08-10T02:48:24.698193+00:00` by `scripts/status_report.py`
 
 **Nothing here is asserted — every state is derived from each project's `artifacts/hygiene/` gate artifacts and freshness vs its last git commit.** Missing or stale evidence shows as UNVERIFIED/STALE.
 
