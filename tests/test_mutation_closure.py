@@ -521,15 +521,15 @@ def _status(projects: list[dict]) -> dict:
 
 def test_render_markdown_full_row() -> None:
     status = _status([{
-        "project": "msb-v3", "state": "VERIFIED", "gate": "PASS",
-        "hygiene": "pass", "mutation_score_pct": 63.6, "coverage_pct": 71.0,
-        "coverage_floor_pct": 65.0, "pytest_passed": True,
+        "project": "msb-v3", "state": "VERIFIED", "verification_tier": "T5 ADVERSARIAL",
+        "gate": "PASS", "hygiene": "pass", "mutation_score_pct": 63.6,
+        "coverage_pct": 71.0, "coverage_floor_pct": 65.0, "pytest_passed": True,
         "pytest_summary": "232 passed", "unresolved_unknowns": 0,
         "evidence_age_h": 2.0, "reasons": ["gate PASS, artifact age 2h"],
         "ci": "success"}])
     md = sr.render_markdown(status)
     assert "Aggregate verdict: **VERIFIED**" in md
-    assert "| msb-v3 | **VERIFIED** | PASS | pass | 63.6% | 71.0%/65% | True | 2.0h | success |" in md
+    assert "| msb-v3 | T5 ADVERSARIAL | **VERIFIED** | PASS | pass | 63.6% | 71.0%/65% | True | 2.0h | success |" in md
     assert "## pytest summaries" in md
     assert "- `msb-v3`: 232 passed" in md
     assert "## Why" in md
@@ -538,20 +538,20 @@ def test_render_markdown_full_row() -> None:
 
 def test_render_markdown_dash_fallbacks() -> None:
     status = _status([{
-        "project": "nexus", "state": "UNVERIFIED", "gate": None, "hygiene": None,
-        "mutation_score_pct": None, "coverage_pct": None, "coverage_floor_pct": None,
-        "pytest_passed": None, "pytest_summary": None, "unresolved_unknowns": None,
-        "evidence_age_h": None, "reasons": ["no factory_gate.json artifact"],
-        "ci": None}])
+        "project": "nexus", "state": "UNVERIFIED", "verification_tier": "T0 ASSERTED",
+        "gate": None, "hygiene": None, "mutation_score_pct": None,
+        "coverage_pct": None, "coverage_floor_pct": None, "pytest_passed": None,
+        "pytest_summary": None, "unresolved_unknowns": None, "evidence_age_h": None,
+        "reasons": ["no factory_gate.json artifact"], "ci": None}])
     md = sr.render_markdown(status)
-    assert "| nexus | **UNVERIFIED** | - | - | - | - | - | Noneh | - |" in md
+    assert "| nexus | T0 ASSERTED | **UNVERIFIED** | - | - | - | - | - | Noneh | - |" in md
     assert "| Noneh |" in md  # None evidence age renders literally (honest: unknown)
 
 
 def test_render_markdown_cov_cell_variants() -> None:
     def row(cov, floor):
-        return _status([{"project": "p", "state": "VERIFIED", "gate": "PASS",
-                         "hygiene": "pass", "mutation_score_pct": None,
+        return _status([{"project": "p", "state": "VERIFIED", "verification_tier": "T2 TESTED",
+                         "gate": "PASS", "hygiene": "pass", "mutation_score_pct": None,
                          "coverage_pct": cov, "coverage_floor_pct": floor,
                          "pytest_passed": True, "pytest_summary": None,
                          "unresolved_unknowns": None, "evidence_age_h": 1.0,
@@ -564,8 +564,8 @@ def test_render_markdown_cov_cell_variants() -> None:
 
 
 def test_render_markdown_unknowns_suffix() -> None:
-    status = _status([{"project": "p", "state": "FAILING", "gate": "FAILED",
-                       "hygiene": "fail", "mutation_score_pct": None,
+    status = _status([{"project": "p", "state": "FAILING", "verification_tier": "T1 STRUCTURAL",
+                       "gate": "FAILED", "hygiene": "fail", "mutation_score_pct": None,
                        "coverage_pct": None, "coverage_floor_pct": None,
                        "pytest_passed": False, "pytest_summary": "3 failed",
                        "unresolved_unknowns": 2, "evidence_age_h": 1.0,

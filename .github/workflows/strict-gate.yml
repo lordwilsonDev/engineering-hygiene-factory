@@ -26,9 +26,10 @@ name: strict-gate
 # evidence-ONLY commit. Re-run gates as part of every change to a project;
 # never mix code and evidence in one commit.
 #
-# Zero-spend: status_report.py is stdlib-only and runs `git log` read-only.
-# No API keys are used, required, or reachable. GH_PAT is needed only to
-# check out the seven private constellation repos.
+# Zero-spend: status_report.py is stdlib-only and runs `git log`/`gh run
+# list` read-only. No API keys are used, required, or reachable. GH_PAT is
+# needed only to check out the seven private constellation repos and to let
+# gh (via GH_TOKEN) read their factory-gate run conclusions for REGRESSED.
 
 on:
   schedule:
@@ -134,21 +135,23 @@ jobs:
           fetch-depth: 0
 
       # The gate itself: any evaluated project below VERIFIED (FAILING,
-      # UNVERIFIED, STALE) fails the run — which fails loudly on a schedule
-      # via the Actions UI, the run list, and any configured notifications.
-      # Deliberately NOT guarded on GH_PAT: if the checkouts above were
-      # skipped (missing/rotated secret), the repos are absent here, every
-      # project reads UNVERIFIED, and strict exits 1 — a missing PAT becomes
-      # an ops-visible red instead of a silent skip. All seven constellation
-      # repos now carry committed gate evidence (domain-router and
-      # skill-orchestration-os included since 2026-08-10, when their
-      # factory_gate.json/hygiene_aggregate.json became tracked). The list
-      # must track PROJECTS in scripts/status_report.py — the canonical
-      # registry.
-      - name: Strict constellation gate (daily — stale evidence fails loudly)
+      # REGRESSED, CONTESTED, UNVERIFIED, STALE) fails the run — which fails
+      # loudly on a schedule via the Actions UI, the run list, and any
+      # configured notifications. Deliberately NOT guarded on GH_PAT: if the
+      # checkouts above were skipped (missing/rotated secret), the repos are
+      # absent here, every project reads UNVERIFIED, and strict exits 1 — a
+      # missing PAT becomes an ops-visible red instead of a silent skip. All
+      # seven constellation repos carry committed gate evidence. `--with-ci`
+      # makes REGRESSED derivable: gh reads each repo's last factory-gate run
+      # conclusion via GH_TOKEN (= GH_PAT for cross-repo access); a failure on
+      # fresh PASS evidence flips the project REGRESSED (historical green +
+      # current red). The --only list must track PROJECTS in
+      # scripts/status_report.py — the canonical registry.
+      - name: Strict constellation gate (daily — stale/regressed evidence fails loudly)
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
           MSB_STATUS_HOME: ${{ github.workspace }}
         run: |
-          python scripts/status_report.py --strict \
+          python scripts/status_report.py --strict --with-ci \
             --only msb-v3,agent-reach,sovereign-mcp-os,sovereign-outcome-engine,nexus,domain-router,skill-orchestration-os

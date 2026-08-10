@@ -516,3 +516,178 @@ def test_check_ignores_unverified_but_strict_does_not(tmp_path, monkeypatch):
         assert sr.main(["--strict"]) == 0
     finally:
         sr.PROJECTS = old
+
+
+# ═══════════════════════ REGRESSED / CONTESTED / tiers / claims ═══════════════════════
+# Ledger P0 (blueprint §22 MVRS): historical green + current red CI -> REGRESSED;
+# supporting + contradicting evidence coexisting -> CONTESTED; tier is derived,
+# never asserted; claims.json is the derived claim registry.
+
+
+def _write_member_artifact(evidence: Path, name: str, verdict: str) -> Path:
+    p = evidence / name
+    p.write_text(json.dumps({"experiment_id": name.rsplit("_", 1)[0],
+                             "verdict": verdict}), encoding="utf-8")
+    return p
+
+
+def test_latest_failed_artifact_ignores_pre_gate_failures(tmp_path):
+    """FAILs recorded BEFORE the gate are superseded by the gate's pass —
+    historical failure is not a live contradiction."""
+    d = tmp_path / "artifacts" / "hygiene"
+    d.mkdir(parents=True)
+    gate_ts = time.time() - 3600
+    gate = d / "factory_gate.json"
+    gate.write_text("x")
+    os.utime(gate, (gate_ts, gate_ts))
+    fail_old = _write_member_artifact(d, "h07_auto_healing_20260809T000000Z.json", "fail")
+    os.utime(fail_old, (gate_ts - 7200, gate_ts - 7200))
+    assert sr.latest_failed_artifact(d, gate_ts) is None
+
+
+def test_latest_failed_artifact_finds_post_gate_failure(tmp_path):
+    """A FAIL recorded AFTER the passing gate is a live contradiction the
+    ledger must surface (invariant 4: never silently discarded)."""
+    d = tmp_path / "artifacts" / "hygiene"
+    d.mkdir(parents=True)
+    gate_ts = time.time() - 3600
+    gate = d / "factory_gate.json"
+    gate.write_text("x")
+    os.utime(gate, (gate_ts, gate_ts))
+    fail_new = _write_member_artifact(d, "d04_routing_accuracy_20260810T120000Z.json", "fail")
+    os.utime(fail_new, (gate_ts + 60, gate_ts + 60))
+    assert sr.latest_failed_artifact(d, gate_ts) == "d04_routing_accuracy_20260810T120000Z.json"
+    # Aggregate/meta files never count as member contradictions.
+    meta = d / "mutation_score.json"
+    meta.write_text(json.dumps({"score_pct": 50.0}))
+    os.utime(meta, (gate_ts + 120, gate_ts + 120))
+    assert sr.latest_failed_artifact(d, gate_ts) == "d04_routing_accuracy_20260810T120000Z.json"
+
+
+def test_derive_state_ci_failure_is_regressed():
+    """Blueprint §22 half 1: historical green (PASS evidence) + current red
+    (repo's own CI failed) is REGRESSED — the code reality moved, the proof
+    didn't."""
+    state, reasons = sr.derive_state(_gate(), {"factory_verdict": "pass"}, None,
+                                     time.time(), 7 * 86400, ci="failure")
+    assert state == "REGRESSED"
+    assert "REGRESSED" not in reasons[0]  # state is the headline; reason explains it
+    assert "last concluded failure" in reasons[0]
+
+
+def test_derive_state_ci_success_stays_verified():
+    state, _ = sr.derive_state(_gate(), {"factory_verdict": "pass"}, None,
+                               time.time(), 7 * 86400, ci="success")
+    assert state == "VERIFIED"
+    state2, _ = sr.derive_state(_gate(), {"factory_verdict": "pass"}, None,
+                                time.time(), 7 * 86400, ci=None)
+    assert state2 == "VERIFIED"
+
+
+def test_derive_state_contradiction_is_contested():
+    """Blueprint §22 half 2: supporting (PASS gate) + contradicting (post-gate
+    FAIL artifact) evidence coexisting is CONTESTED, not a silent green."""
+    state, reasons = sr.derive_state(
+        _gate(), {"factory_verdict": "pass"}, None, time.time(), 7 * 86400,
+        contradiction="d04_routing_accuracy_20260810T120000Z.json")
+    assert state == "CONTESTED"
+    assert "d04_routing_accuracy_20260810T120000Z.json" in reasons[0]
+    assert "preserved" in reasons[0]
+
+
+def test_derive_state_regressed_wins_over_contested():
+    """CI red (REGRESSED) outranks a preserved contradiction (CONTESTED): the
+    live failure is the worse epistemic state."""
+    state, _ = sr.derive_state(
+        _gate(), {"factory_verdict": "pass"}, None, time.time(), 7 * 86400,
+        ci="failure", contradiction="d04_routing_accuracy_20260810T120000Z.json")
+    assert state == "REGRESSED"
+
+
+def test_verification_tier_derivation():
+    """Tier is derived from the weakest existing evidence, never asserted — a
+    repo cannot claim T5 ADVERSARIAL without mutation evidence."""
+    assert sr.verification_tier(None, None, None, None, None) == "T0 ASSERTED"
+    assert sr.verification_tier(_gate(), False, None, None, None) == "T1 STRUCTURAL"
+    assert sr.verification_tier(_gate(), True, None, None, None) == "T2 TESTED"
+    assert sr.verification_tier(_gate(), True, True, None, None) == "T3 EXECUTED"
+    assert sr.verification_tier(_gate(), True, True, "pass", None) == "T4 INTEGRATED"
+    assert sr.verification_tier(_gate(), True, True, "pass", 63.6) == "T5 ADVERSARIAL"
+    # Mut score below threshold (50%) -> T4, not T5
+    assert sr.verification_tier(_gate(), True, True, "pass", 30.0) == "T4 INTEGRATED"
+    # pytest failed -> the gate's own tests did not pass; tier cannot climb.
+    assert sr.verification_tier(_gate("FAIL"), False, None, "fail", None) == "T1 STRUCTURAL"
+
+
+def test_derive_claims_registry(tmp_path):
+    """claims.json is DERIVED from the same evidence the states come from —
+    one claim per project, carrying tier + verdict + contradiction refs."""
+    repo = tmp_path / "msb-v3"
+    (repo / "artifacts" / "hygiene").mkdir(parents=True)
+    (repo / "artifacts" / "hygiene" / "factory_gate.json").write_text(
+        json.dumps(_gate()), encoding="utf-8")
+    (repo / "artifacts" / "hygiene" / "hygiene_aggregate.json").write_text(
+        json.dumps(_agg()), encoding="utf-8")
+
+    old = sr.PROJECTS
+    sr.PROJECTS = [{"name": "msb-v3", "repo": str(repo), "slug": "x/m"}]
+    try:
+        status = sr.build_status(with_ci=False)
+        claims = sr.derive_claims(status)
+        assert claims["ledger"] == "sovereign-verification"
+        assert len(claims["claims"]) == 1
+        claim = claims["claims"][0]
+        assert claim["claim_id"] == "claim:msb-v3:verified"
+        assert claim["verification_tier"] == "T4 INTEGRATED"
+        assert claim["verdict"] == "VERIFIED"
+        assert claim["evidence"]  # evidence refs are never empty
+        assert claim["contradicted_by"] == []
+    finally:
+        sr.PROJECTS = old
+
+
+def test_derive_claims_records_contradictions(tmp_path, monkeypatch):
+    """A REGRESSED project's claim must carry its contradiction — the ledger
+    preserves it instead of burying it."""
+    repo = tmp_path / "nexus"
+    (repo / "artifacts" / "hygiene").mkdir(parents=True)
+    (repo / "artifacts" / "hygiene" / "factory_gate.json").write_text(
+        json.dumps(_gate()), encoding="utf-8")
+    (repo / "artifacts" / "hygiene" / "hygiene_aggregate.json").write_text(
+        json.dumps(_agg()), encoding="utf-8")
+
+    old = sr.PROJECTS
+    sr.PROJECTS = [{"name": "nexus", "repo": str(repo), "slug": "x/nx"}]
+    try:
+        monkeypatch.setattr(sr, "ci_conclusion", lambda slug: "failure")
+        status = sr.build_status(with_ci=True)
+        assert status["projects"][0]["state"] == "REGRESSED"
+        claim = sr.derive_claims(status)["claims"][0]
+        assert claim["verdict"] == "REGRESSED"
+        assert claim["contradicted_by"], "REGRESSED claim must preserve the contradiction"
+    finally:
+        sr.PROJECTS = old
+
+
+def test_build_status_contested_from_post_gate_artifact(tmp_path):
+    """End-to-end: a FAIL member artifact recorded after the passing gate
+    flips the project CONTESTED in build_status."""
+    repo = tmp_path / "domain-router"
+    d = repo / "artifacts" / "hygiene"
+    d.mkdir(parents=True)
+    gate = d / "factory_gate.json"
+    gate.write_text(json.dumps(_gate()), encoding="utf-8")
+    gate_ts = time.time() - 3600
+    os.utime(gate, (gate_ts, gate_ts))
+    (d / "hygiene_aggregate.json").write_text(json.dumps(_agg()), encoding="utf-8")
+    fail_new = _write_member_artifact(d, "d04_routing_accuracy_20260810T120000Z.json", "fail")
+    os.utime(fail_new, (gate_ts + 60, gate_ts + 60))
+
+    old = sr.PROJECTS
+    sr.PROJECTS = [{"name": "domain-router", "repo": str(repo), "slug": "x/dr"}]
+    try:
+        status = sr.build_status(with_ci=False)
+        assert status["projects"][0]["state"] == "CONTESTED"
+        assert status["verdict"] == "CONTESTED"
+    finally:
+        sr.PROJECTS = old

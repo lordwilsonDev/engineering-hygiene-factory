@@ -6,7 +6,10 @@ asserts a project is "verified" — every status is DERIVED from the evidence
 artifacts each project's own gate produced (factory_gate.json +
 hygiene_aggregate.json under <project>/artifacts/hygiene/), cross-checked
 against how fresh that evidence is relative to the project's last git
-commit.
+commit. This is the Sovereign Verification Ledger's constellation generator
+(blueprint: ~/.hermes/skills/sovereign-verification/references/blueprint.md):
+claim -> evidence -> freshness -> verdict, with contradictions preserved
+and the ledger itself harder to fool than the claims it evaluates.
 
 Status derivation (the only truth table):
 
@@ -17,21 +20,36 @@ Status derivation (the only truth table):
                                                       works from fresh CI checkouts)
     evidence older than last NON-EVIDENCE commit -> STALE  (code moved past the proof)
     evidence older than window      -> STALE       (nobody's run the gate lately)
+    fresh PASS + last CI red        -> REGRESSED   (historical green + current red:
+                                                     the repo's own factory-gate CI
+                                                     failed on its latest code; needs
+                                                     --with-ci, which gh can see)
+    fresh PASS + post-gate FAIL artifact -> CONTESTED (supporting + contradicting
+                                                     evidence coexist; the recorded
+                                                     contradiction is preserved,
+                                                     never silently discarded)
     otherwise                       -> VERIFIED    (green AND current)
+
+REGRESSED and CONTESTED are the ledger's negative-evidence states: they exist
+so a green past can never mask a red present, and so a recorded failure is
+never dropped from the record.
 
 `--check` exits 1 if any project whose artifacts are PRESENT is FAILING (or
 the generator itself errors) — the CI canary. Absent projects are reported
 UNVERIFIED, not fatal (CI runners only have some repos checked out).
-`--strict` exits 1 on ANY state below VERIFIED (FAILING, UNVERIFIED,
-STALE) — use it where all evaluated repos exist and "not red" must mean
-"green and current". `--only a,b` scopes evaluation to named projects (and
-therefore which projects --strict can fail on) — CI uses it to gate exactly
-the repos it checked out. Repos resolve under MSB_STATUS_HOME (default ~),
-so CI can point the constellation at its checkout workspace.
+`--strict` exits 1 on ANY state below VERIFIED (FAILING, REGRESSED, CONTESTED,
+UNVERIFIED, STALE) — use it where all evaluated repos exist and "not red" must
+mean "green and current". `--only a,b` scopes evaluation to named projects
+(and therefore which projects --strict can fail on) — CI uses it to gate
+exactly the repos it checked out. Repos resolve under MSB_STATUS_HOME
+(default ~), so CI can point the constellation at its checkout workspace.
 
 Outputs: <factory>/STATUS.md (human) + <factory>/artifacts/status/status.json
-(machine). Optional `--with-ci` appends the last GitHub Actions factory-gate
-conclusion per project via `gh` (best-effort; never fails the run).
+(machine) + <factory>/artifacts/status/claims.json (the ledger's claim
+registry — one claim per project, tier + verdict derived from the same
+evidence). Optional `--with-ci` appends the last GitHub Actions factory-gate
+conclusion per project via `gh` (best-effort; never fails the run) and is
+what makes REGRESSED detectable.
 
 Stdlib-only. Zero-spend: reads artifacts, runs `git`/`gh` read-only.
 """
@@ -101,8 +119,12 @@ def repo_path(name: str) -> Path:
             return repo_root() / p
     return repo_root() / name
 
-# Status ordering for the aggregate verdict: worse wins.
-_STATUS_WEIGHT = {"FAILING": 0, "UNVERIFIED": 1, "STALE": 2, "VERIFIED": 3}
+# Status ordering for the aggregate verdict: worse wins. REGRESSED (code
+# reality red while evidence claims green) and CONTESTED (contradiction
+# preserved) are worse than no-evidence and plain staleness: a green past
+# must never mask a red present.
+_STATUS_WEIGHT = {"FAILING": 0, "REGRESSED": 1, "CONTESTED": 2,
+                  "UNVERIFIED": 3, "STALE": 4, "VERIFIED": 5}
 
 
 def now_utc() -> dt.datetime:
@@ -178,14 +200,18 @@ def recorded_head(gate: dict | None) -> str | None:
 
 
 def ci_conclusion(slug: str) -> str | None:
-    """Last factory-gate CI conclusion for a repo slug (best-effort)."""
+    """Last factory-gate CI conclusion for a repo slug (best-effort).
+
+    Uses `gh`, which honours GH_TOKEN/GH_PAT for cross-repo reads. None when
+    gh is unavailable, the query fails, or no factory-gate run exists yet.
+    """
     if not shutil.which("gh"):
         return None
     try:
         proc = subprocess.run(
             ["gh", "run", "list", "--repo", slug, "--workflow", "factory-gate",
              "--limit", "1", "--json", "conclusion"],
-            capture_output=True, text=True, timeout=15, check=False,
+            capture_output=True, text=True, timeout=20, check=False,
         )
         if proc.returncode != 0:
             return None
@@ -221,12 +247,58 @@ def gate_pytest(gate: dict | None) -> tuple[bool | None, str | None]:
     return pytest.get("passed"), pytest.get("summary")
 
 
+def gate_live_auth(gate: dict | None) -> bool | None:
+    """Whether the gate's live-auth probe was verified (True/False/None).
+
+    Scoped-out projects record None (or an explicit non-boolean note) — a
+    serverless CLI cannot be probed, which is not the same as failing.
+    """
+    if not gate:
+        return None
+    ver = gate.get("VERIFICATION") or {}
+    la = ver.get("live_auth") or {}
+    if not isinstance(la, dict):
+        return None
+    verified = la.get("verified")
+    return bool(verified) if isinstance(verified, bool) else None
+
+
 def gate_unknowns(gate: dict | None) -> int | None:
     if not gate:
         return None
     rv = gate.get("RELEASE_VERDICT") or {}
     unknowns = rv.get("unresolved_unknowns") if isinstance(rv, dict) else None
     return len(unknowns) if isinstance(unknowns, list) else None
+
+
+def latest_failed_artifact(evidence: Path, after: float) -> str | None:
+    """Name of the newest member artifact with verdict==fail and mtime > `after`.
+
+    This is the ledger's contradiction detector: a FAILED member recorded
+    AFTER the passing gate is supporting + contradicting evidence coexisting
+    (blueprint invariant 4 — contradictory evidence is never silently
+    discarded). Historical FAILs that predate the gate are superseded by the
+    gate's own pass and ignored; only post-gate contradictions surface as
+    CONTESTED.
+    """
+    if not evidence.is_dir():
+        return None
+    newest: str | None = None
+    newest_mtime = 0.0
+    for p in evidence.glob("*.json"):
+        if p.name in ("factory_gate.json", "hygiene_aggregate.json", "mutation_score.json"):
+            continue
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if not isinstance(data, dict) or data.get("verdict") != "fail":
+            continue
+        mtime = p.stat().st_mtime
+        if mtime > after and mtime > newest_mtime:
+            newest = p.name
+            newest_mtime = mtime
+    return newest
 
 
 def mutation_score(repo: Path) -> float | None:
@@ -260,16 +332,54 @@ def gate_coverage(gate: dict | None) -> tuple[float | None, float | None]:
             float(floor) if isinstance(floor, (int, float)) else None)
 
 
+def verification_tier(gate: dict | None, pytest_passed: bool | None,
+                      live_auth: bool | None, hygiene: str | None,
+                      mutation: float | None) -> str:
+    """Ledger verification tier derived from the evidence that actually exists.
+
+    T0 ASSERTED    — repo known, no evidence
+    T1 STRUCTURAL  — gate artifact exists (schema-validated shape)
+    T2 TESTED      — the gate's pytest leg ran and passed
+    T3 EXECUTED    — a live server probe was verified (not just unit tests)
+    T4 INTEGRATED  — the full hygiene suite passes (constellation-integrated)
+    T5 ADVERSARIAL — mutation evidence exists (tests proven, not just run)
+    T6 FORMAL      — reserved; no constellation repo reaches it today
+
+    A tier is never higher than the weakest evidence beneath it (blueprint
+    invariant 6: no lower tier rendered as a higher tier).
+    """
+    if gate is None:
+        return "T0 ASSERTED"
+    tier = "T1 STRUCTURAL"
+    if pytest_passed:
+        tier = "T2 TESTED"
+    if live_auth:
+        tier = "T3 EXECUTED"
+    if hygiene == "pass":
+        tier = "T4 INTEGRATED"
+    if mutation is not None and mutation >= 50.0:
+        tier = "T5 ADVERSARIAL"
+    return tier
+
+
 def derive_state(gate: dict | None, aggregate: dict | None,
                  commit_ts: float | None, gate_mtime: float,
                  stale_seconds: int, head_now: str | None = None,
-                 head_recorded: str | None = None) -> tuple[str, list[str]]:
+                 head_recorded: str | None = None,
+                 ci: str | None = None,
+                 contradiction: str | None = None) -> tuple[str, list[str]]:
     """Truth table above. Returns (state, reasons).
 
     `head_now`/`head_recorded` are the repo's current code HEAD hash and the
     hash the gate recorded (VERIFICATION.git_head). When both exist and
     differ, the code moved past the proof even if mtimes look fresh — the
     hash check is what makes staleness detectable from a fresh CI checkout.
+
+    `ci` is the repo's last factory-gate CI conclusion ("success"/"failure"):
+    a failure on fresh PASS evidence is REGRESSED (historical green + current
+    red). `contradiction` is a post-gate FAIL artifact name: supporting and
+    contradicting evidence coexisting is CONTESTED — preserved, never
+    silently discarded.
     """
     reasons: list[str] = []
     if gate is None:
@@ -287,6 +397,16 @@ def derive_state(gate: dict | None, aggregate: dict | None,
     age = now_utc().timestamp() - gate_mtime
     if gate_mtime and age > stale_seconds:
         return "STALE", [f"gate artifact {int(age // 86400)} days old (> {stale_seconds // 86400})"]
+    if ci == "failure":
+        return "REGRESSED", [
+            "committed evidence is PASS and current, but the repo's own "
+            "factory-gate CI last concluded failure (historical green + "
+            "current red — the code reality regressed)"]
+    if contradiction:
+        return "CONTESTED", [
+            f"contradicting evidence recorded after the gate: {contradiction} "
+            "(supporting PASS + recorded FAIL coexist; the contradiction is "
+            "preserved, not discarded)"]
     reasons.append(f"gate PASS, artifact age {int(max(age, 0) // 3600)}h")
     return "VERIFIED", reasons
 
@@ -312,32 +432,41 @@ def build_status(with_ci: bool = False, stale_seconds: int = DEFAULT_STALE_DAYS 
         gate = read_json(gate_path)
         aggregate = read_json(agg_path)
         commit_ts = last_commit_time(repo)
-        state, reasons = derive_state(
-            gate, aggregate, commit_ts, artifact_mtime(gate_path), stale_seconds,
-            head_now=code_head(repo), head_recorded=recorded_head(gate))
-
         pytest_passed, pytest_summary = gate_pytest(gate)
         coverage_pct, coverage_floor = gate_coverage(gate)
+        mutation = mutation_score(repo)
+        hygiene_verdict = (aggregate or {}).get("factory_verdict")
+        live_auth_verified = gate_live_auth(gate)
+        ci = ci_conclusion(cfg["slug"]) if with_ci else None
+        contradiction = (latest_failed_artifact(evidence, artifact_mtime(gate_path))
+                         if gate_path.exists() else None)
+        state, reasons = derive_state(
+            gate, aggregate, commit_ts, artifact_mtime(gate_path), stale_seconds,
+            head_now=code_head(repo), head_recorded=recorded_head(gate),
+            ci=ci, contradiction=contradiction)
+
         entry: dict = {
             "project": cfg["name"],
             "repo": str(repo),
             "state": state,
+            "verification_tier": verification_tier(
+                gate, pytest_passed, live_auth_verified, hygiene_verdict, mutation),
             "gate": gate_verdict(gate),
-            "hygiene": (aggregate or {}).get("factory_verdict"),
-            "mutation_score_pct": mutation_score(repo),
+            "hygiene": hygiene_verdict,
+            "mutation_score_pct": mutation,
             "coverage_pct": coverage_pct,
             "coverage_floor_pct": coverage_floor,
             "pytest_passed": pytest_passed,
             "pytest_summary": pytest_summary,
+            "live_auth_verified": live_auth_verified,
             "unresolved_unknowns": gate_unknowns(gate),
             "evidence_age_h": None if not gate_path.exists()
                 else round(max(now_utc().timestamp() - artifact_mtime(gate_path), 0) / 3600, 1),
             "stale_after_last_commit": bool(commit_ts and gate_path.exists()
                 and artifact_mtime(gate_path) < commit_ts),
+            "ci": ci,
             "reasons": reasons,
         }
-        if with_ci:
-            entry["ci"] = ci_conclusion(cfg["slug"])
         projects.append(entry)
 
     # Aggregate: worst state wins (fails loudly over stale, etc.).
@@ -351,6 +480,33 @@ def build_status(with_ci: bool = False, stale_seconds: int = DEFAULT_STALE_DAYS 
     }
 
 
+def derive_claims(status: dict) -> dict:
+    """The ledger's claim registry: one claim per project, DERIVED from the
+    same evidence the states come from — nothing is asserted here. This is
+    the blueprint's claim store (claim_id, subject, verification_tier,
+    verdict, evidence refs, contradictions) rendered as a first-class output
+    so a claim can never outlive the evidence it sits on.
+    """
+    claims: list[dict] = []
+    for p in status["projects"]:
+        claims.append({
+            "claim_id": f"claim:{p['project']}:verified",
+            "subject": p["project"],
+            "claim_type": "constellation_node_verified",
+            "verification_tier": p["verification_tier"],
+            "verdict": p["state"],
+            "evidence": [f"{p['repo']}/artifacts/hygiene/factory_gate.json"],
+            "evaluated_at": status["generated_at"],
+            "contradicted_by": [p["reasons"][0]] if p["state"] in ("REGRESSED", "CONTESTED", "FAILING") else [],
+        })
+    return {
+        "ledger": "sovereign-verification",
+        "generated_at": status["generated_at"],
+        "verdict": status["verdict"],
+        "claims": claims,
+    }
+
+
 def render_markdown(status: dict) -> str:
     lines = [
         "# Constellation Status (derived from evidence)",
@@ -359,12 +515,15 @@ def render_markdown(status: dict) -> str:
         "",
         "**Nothing here is asserted — every state is derived from each "
         "project's `artifacts/hygiene/` gate artifacts and freshness vs its "
-        "last git commit.** Missing or stale evidence shows as UNVERIFIED/STALE.",
+        "last git commit.** Missing or stale evidence shows as UNVERIFIED/STALE; "
+        "fresh PASS with a red repo CI shows as REGRESSED; a recorded "
+        "post-gate failure shows as CONTESTED (contradictions are preserved, "
+        "never silently discarded).",
         "",
         f"Aggregate verdict: **{status['verdict']}**",
         "",
-        "| Project | State | Gate | Hygiene | Mutation | Cov | pytest | Evidence age | CI (last run) |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| Project | Tier | State | Gate | Hygiene | Mutation | Cov | pytest | Evidence age | CI (last run) |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for p in status["projects"]:
         mutation = p.get("mutation_score_pct")
@@ -378,8 +537,8 @@ def render_markdown(status: dict) -> str:
         else:
             cov_cell = f"{cov}%/{cov_floor:.0f}%"
         lines.append(
-            f"| {p['project']} | **{p['state']}** | {p['gate'] or '-'} | "
-            f"{p['hygiene'] or '-'} | {mutation_cell} | {cov_cell} | "
+            f"| {p['project']} | {p.get('verification_tier') or '-'} | **{p['state']}** | "
+            f"{p['gate'] or '-'} | {p['hygiene'] or '-'} | {mutation_cell} | {cov_cell} | "
             f"{p['pytest_passed'] if p['pytest_passed'] is not None else '-'} | "
             f"{p['evidence_age_h']}h | {p.get('ci') or '-'} |"
         )
@@ -397,8 +556,9 @@ def render_markdown(status: dict) -> str:
             lines.append(f"- `{p['project']}`: {r}")
     lines.append("")
     lines.append("_Regenerate with: `python scripts/status_report.py` "
-                 "(add `--with-ci` for GitHub run conclusions). `--check` "
-                 "exits 1 if any present project is FAILING._")
+                 "(add `--with-ci` for GitHub run conclusions — required for "
+                 "REGRESSED to be derivable). `--check` exits 1 if any present "
+                 "project is FAILING._")
     return "\n".join(lines)
 
 
@@ -407,9 +567,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check", action="store_true",
                         help="exit 1 if any present project is FAILING or the generator errors")
     parser.add_argument("--strict", action="store_true",
-                        help="exit 1 if ANY project is below VERIFIED (FAILING/UNVERIFIED/STALE)")
+                        help="exit 1 if ANY project is below VERIFIED (FAILING/REGRESSED/CONTESTED/UNVERIFIED/STALE)")
     parser.add_argument("--with-ci", action="store_true",
-                        help="append last GitHub factory-gate conclusion per project (needs gh)")
+                        help="append last GitHub factory-gate conclusion per project (needs gh; enables REGRESSED)")
     parser.add_argument("--stale-days", type=int, default=DEFAULT_STALE_DAYS,
                         help="evidence older than this is STALE (default 7)")
     parser.add_argument("--only", type=str, default=None,
@@ -436,11 +596,15 @@ def main(argv: list[str] | None = None) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "status.json").write_text(json.dumps(status, indent=2), encoding="utf-8")
     (ROOT / "STATUS.md").write_text(render_markdown(status), encoding="utf-8")
+    claims = derive_claims(status)
+    (out_dir / "claims.json").write_text(json.dumps(claims, indent=2), encoding="utf-8")
     print(f"status.json -> {out_dir / 'status.json'}")
     print(f"STATUS.md   -> {ROOT / 'STATUS.md'}")
+    print(f"claims.json -> {out_dir / 'claims.json'}")
     for p in status["projects"]:
-        print(f"  {p['project']:28s} {p['state']:10s} gate={p['gate'] or '-':4s} "
-              f"hygiene={p['hygiene'] or '-':8s} age={p['evidence_age_h']}h")
+        print(f"  {p['project']:28s} {p['state']:10s} {p.get('verification_tier') or '-':14s} "
+              f"gate={p['gate'] or '-':4s} hygiene={p['hygiene'] or '-':8s} "
+              f"age={p['evidence_age_h']}h ci={p.get('ci') or '-'}")
 
     if args.check:
         failing = [p["project"] for p in status["projects"] if p["state"] == "FAILING"]
@@ -452,7 +616,8 @@ def main(argv: list[str] | None = None) -> int:
         below = [p["project"] for p in status["projects"]
                  if _STATUS_WEIGHT[p["state"]] < _STATUS_WEIGHT["VERIFIED"]]
         if below:
-            print(f"strict FAILED: projects below VERIFIED (FAILING/UNVERIFIED/STALE): {below}")
+            print(f"strict FAILED: projects below VERIFIED "
+                  f"(FAILING/REGRESSED/CONTESTED/UNVERIFIED/STALE): {below}")
             return 1
         print("strict PASSED: every project is VERIFIED")
     return 0
