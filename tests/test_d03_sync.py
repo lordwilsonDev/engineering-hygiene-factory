@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""d03/d05 scrub-list sync guard.
+"""d03/d05/d07 scrub-list sync guard.
 
 `run_factory.py`'s ZERO_SPEND_ENV_VARS is the canonical paid-credential scrub
-list; the domain-router d03 AND d05 runners each carry a copy (kept in
+list; the domain-router d03, d05 AND d07 runners each carry a copy (kept in
 lockstep by an explicit comment). If one list changes and the others don't, a
 gate that claims zero-spend could leak through the stale list. This test
 reads ALL lists and asserts they match, so drift fails loudly instead of
 silently.
 
-The d03/d05 files live in the sibling domain-router tree, not this repo. When
-they are absent — e.g. this repo is checked out alone in CI without the
+The d03/d05/d07 files live in the sibling domain-router tree, not this repo.
+When they are absent — e.g. this repo is checked out alone in CI without the
 optional domain-router checkout — the test SKIPS with an explicit reason
 rather than hard-failing on a missing sibling. Set D03_RUNNER_PATH /
-D05_RUNNER_PATH to point at the runners to enforce the check in any
-environment.
+D05_RUNNER_PATH / D07_RUNNER_PATH to point at the runners to enforce the
+check in any environment.
 """
 
 import ast
@@ -38,6 +38,11 @@ _D05_DEFAULT = (
     / "d05_vault_freshness_runner.py"
 )
 D05_RUNNER = Path(os.environ.get("D05_RUNNER_PATH", _D05_DEFAULT))
+_D07_DEFAULT = (
+    Path.home() / ".hermes" / "domain-router" / "scripts" / "hygiene"
+    / "d07_structural_classifier_runner.py"
+)
+D07_RUNNER = Path(os.environ.get("D07_RUNNER_PATH", _D07_DEFAULT))
 
 
 def _tuple_literals(source: str, name: str = "ZERO_SPEND_ENV_VARS") -> list[str]:
@@ -88,3 +93,12 @@ def test_zero_spend_lists_match_d05() -> None:
             "to enforce the scrub-list sync"
         )
     _assert_list_matches(D05_RUNNER, "d05")
+
+
+def test_zero_spend_lists_match_d07() -> None:
+    if not D07_RUNNER.exists():
+        pytest.skip(
+            f"d07 runner not present ({D07_RUNNER}); set D07_RUNNER_PATH "
+            "to enforce the scrub-list sync"
+        )
+    _assert_list_matches(D07_RUNNER, "d07")
