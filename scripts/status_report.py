@@ -332,9 +332,48 @@ def gate_coverage(gate: dict | None) -> tuple[float | None, float | None]:
             float(floor) if isinstance(floor, (int, float)) else None)
 
 
+FORMAL_ARTIFACT = "formal_verification.json"
+# Required fields for a formal-verification artifact (T6 FORMAL evidence).
+FORMAL_REQUIRED = {"tool", "technique", "claims", "result", "artifact_hashes"}
+
+
+def formal_verification(repo: Path) -> bool:
+    """Whether the repo carries a VALID formal-verification artifact.
+
+    T6 FORMAL is deliberately hard to reach: it requires an explicit,
+    schema-conformant artifact (artifacts/hygiene/formal_verification.json)
+    declaring which formal tool/technique was used (model check, proof
+    assistant, bounded verification, …), which claims were formally checked,
+    the result, and the hashes of the artifacts the proof binds to. A repo
+    that merely runs pytest — even mutation-proven pytest — can never reach
+    T6, because running tests is not formal verification. No constellation
+    repo carries this artifact today, so T6 is a documented pathway, not a
+    reachable state.
+
+    Returns False for missing, malformed, or schema-nonconformant artifacts
+    (fail closed — a broken artifact can never buy a higher tier).
+    """
+    data = read_json(repo / "artifacts" / "hygiene" / FORMAL_ARTIFACT)
+    if not isinstance(data, dict) or not data:
+        return False
+    missing = FORMAL_REQUIRED - set(data)
+    if missing:
+        return False
+    result = data.get("result")
+    if not isinstance(result, str) or result.upper() != "PASS":
+        return False
+    hashes = data.get("artifact_hashes")
+    if not isinstance(hashes, dict) or not hashes:
+        return False
+    for digest in hashes.values():
+        if not isinstance(digest, str) or len(digest) < 16:
+            return False
+    return True
+
+
 def verification_tier(gate: dict | None, pytest_passed: bool | None,
                       live_auth: bool | None, hygiene: str | None,
-                      mutation: float | None) -> str:
+                      mutation: float | None, formal: bool = False) -> str:
     """Ledger verification tier derived from the evidence that actually exists.
 
     T0 ASSERTED    — repo known, no evidence
@@ -343,10 +382,14 @@ def verification_tier(gate: dict | None, pytest_passed: bool | None,
     T3 EXECUTED    — a live server probe was verified (not just unit tests)
     T4 INTEGRATED  — the full hygiene suite passes (constellation-integrated)
     T5 ADVERSARIAL — mutation evidence exists (tests proven, not just run)
-    T6 FORMAL      — reserved; no constellation repo reaches it today
+    T6 FORMAL      — valid formal-verification artifact present (model check /
+                     proof assistant result binding to hashed artifacts)
 
     A tier is never higher than the weakest evidence beneath it (blueprint
-    invariant 6: no lower tier rendered as a higher tier).
+    invariant 6: no lower tier rendered as a higher tier). T6 additionally
+    requires the full stack beneath it (gate + tests + hygiene) AND the
+    dedicated formal artifact — pytest alone, however well-proven, is not
+    formal verification, so no ordinary repo can stumble into T6.
     """
     if gate is None:
         return "T0 ASSERTED"
@@ -359,6 +402,8 @@ def verification_tier(gate: dict | None, pytest_passed: bool | None,
         tier = "T4 INTEGRATED"
     if mutation is not None and mutation >= 50.0:
         tier = "T5 ADVERSARIAL"
+    if formal and pytest_passed and hygiene == "pass":
+        tier = "T6 FORMAL"
     return tier
 
 
@@ -435,6 +480,7 @@ def build_status(with_ci: bool = False, stale_seconds: int = DEFAULT_STALE_DAYS 
         pytest_passed, pytest_summary = gate_pytest(gate)
         coverage_pct, coverage_floor = gate_coverage(gate)
         mutation = mutation_score(repo)
+        formal = formal_verification(repo)
         hygiene_verdict = (aggregate or {}).get("factory_verdict")
         live_auth_verified = gate_live_auth(gate)
         ci = ci_conclusion(cfg["slug"]) if with_ci else None
@@ -450,7 +496,8 @@ def build_status(with_ci: bool = False, stale_seconds: int = DEFAULT_STALE_DAYS 
             "repo": str(repo),
             "state": state,
             "verification_tier": verification_tier(
-                gate, pytest_passed, live_auth_verified, hygiene_verdict, mutation),
+                gate, pytest_passed, live_auth_verified, hygiene_verdict, mutation,
+                formal=formal),
             "gate": gate_verdict(gate),
             "hygiene": hygiene_verdict,
             "mutation_score_pct": mutation,
