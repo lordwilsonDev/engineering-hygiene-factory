@@ -302,6 +302,94 @@ def test_code_commit_after_gate_is_stale(tmp_path, monkeypatch):
     assert "predates last commit" in reasons[0]
 
 
+def test_repo_path_relative_resolves_under_msb_status_home(tmp_path, monkeypatch):
+    """Bare-name repos resolve under MSB_STATUS_HOME (CI checkout workspace),
+    while absolute paths (and test overrides) win as-is."""
+    old = sr.PROJECTS
+    sr.PROJECTS = [
+        {"name": "nexus", "repo": "nexus", "slug": "x/nx"},            # relative
+        {"name": "abs", "repo": str(tmp_path / "abs"), "slug": "x/a"},  # absolute
+    ]
+    try:
+        monkeypatch.setenv("MSB_STATUS_HOME", str(tmp_path))
+        assert sr.repo_path("nexus") == tmp_path / "nexus"
+        assert sr.repo_path("abs") == tmp_path / "abs"
+        monkeypatch.delenv("MSB_STATUS_HOME")
+        # Default (no env): relative name resolves under ~ (unchanged behavior).
+        assert sr.repo_path("nexus") == Path.home() / "nexus"
+    finally:
+        sr.PROJECTS = old
+
+
+def test_repo_root_empty_env_falls_back_to_home(tmp_path, monkeypatch):
+    """MSB_STATUS_HOME set-but-empty must not rebase repos onto cwd."""
+    monkeypatch.setenv("MSB_STATUS_HOME", "   ")
+    assert sr.repo_root() == Path.home()
+    monkeypatch.setenv("MSB_STATUS_HOME", "")
+    assert sr.repo_root() == Path.home()
+    monkeypatch.setenv("MSB_STATUS_HOME", str(tmp_path))
+    assert sr.repo_root() == tmp_path
+
+
+def test_status_main_warns_unknown_only_names(tmp_path, monkeypatch, capsys):
+    """A typo in --only must be loud, never a silently-shrunk gate."""
+    stub = {"generated_at": "x", "generator": "g", "stale_after_days": 7,
+            "verdict": "VERIFIED", "projects": []}
+    monkeypatch.setattr(sr, "ROOT", tmp_path)
+    monkeypatch.setattr(sr, "PROJECTS", [{"name": "msb-v3", "repo": "msb-v3",
+                                          "slug": "x/m"}])
+    monkeypatch.setattr(sr, "build_status", lambda **kw: stub)
+    assert sr.main(["--only", "msb-v3,nexu"]) == 0
+    err = capsys.readouterr().err
+    assert "nexu" in err and "not in PROJECTS" in err
+
+
+def test_build_status_only_scopes_evaluation(tmp_path, monkeypatch):
+    """`only` evaluates exactly the named projects, so --strict can gate the
+    repos CI has checked out without tripping on absent-evidence projects
+    that are covered by their own workflows."""
+    ok = tmp_path / "ok"
+    (ok / "artifacts" / "hygiene").mkdir(parents=True)
+    (ok / "artifacts" / "hygiene" / "factory_gate.json").write_text(
+        json.dumps(_gate()), encoding="utf-8")
+    (ok / "artifacts" / "hygiene" / "hygiene_aggregate.json").write_text(
+        json.dumps(_agg()), encoding="utf-8")
+    bad = tmp_path / "bad"  # exists but has NO evidence -> UNVERIFIED
+
+    old = sr.PROJECTS
+    sr.PROJECTS = [
+        {"name": "ok", "repo": str(ok), "slug": "x/ok"},
+        {"name": "bad", "repo": str(bad), "slug": "x/bad"},
+    ]
+    try:
+        status = sr.build_status(with_ci=False)
+        by_name = {p["project"]: p for p in status["projects"]}
+        assert by_name["ok"]["state"] == "VERIFIED"
+        assert by_name["bad"]["state"] == "UNVERIFIED"
+        # Scoped: only ok is evaluated -> aggregate VERIFIED (strict-safe).
+        scoped = sr.build_status(with_ci=False, only=["ok"])
+        assert [p["project"] for p in scoped["projects"]] == ["ok"]
+        assert scoped["verdict"] == "VERIFIED"
+        # Scoped to bad: UNVERIFIED -> strict would fail (correctly).
+        scoped_bad = sr.build_status(with_ci=False, only=["bad"])
+        assert scoped_bad["verdict"] == "UNVERIFIED"
+    finally:
+        sr.PROJECTS = old
+
+
+def test_status_main_passes_only_to_build_status(tmp_path, monkeypatch):
+    """--only a,b threads through main() into build_status."""
+    seen: dict = {}
+    stub = {"generated_at": "x", "generator": "g", "stale_after_days": 7,
+            "verdict": "VERIFIED", "projects": []}
+    monkeypatch.setattr(sr, "ROOT", tmp_path)
+    monkeypatch.setattr(sr, "PROJECTS", [])
+    monkeypatch.setattr(sr, "build_status",
+                        lambda **kw: seen.update(kw) or stub)
+    assert sr.main(["--only", "msb-v3,nexus"]) == 0
+    assert seen.get("only") == ["msb-v3", "nexus"]
+
+
 def test_check_ignores_unverified_but_strict_does_not(tmp_path, monkeypatch):
     """--check is the CI canary (absent projects non-fatal); --strict is the
     local constellation-wide gate (anything below VERIFIED is fatal)."""

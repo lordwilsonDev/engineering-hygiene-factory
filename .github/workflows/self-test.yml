@@ -52,6 +52,52 @@ jobs:
           token: ${{ secrets.GH_PAT }}
           path: nexus
 
+      # The four remaining constellation repos — checked out so the --strict
+      # step can gate their committed evidence from fresh clones. Each repo's
+      # OWN factory-gate workflow re-runs its real gate on every push to it;
+      # the factory's strict step checks that every project's committed gate
+      # evidence exists AND says PASS (all five: msb-v3, agent-reach,
+      # sovereign-mcp-os, sovereign-outcome-engine, nexus).
+      - name: Checkout msb-v3 (strict-gate evidence)
+        if: ${{ env.GH_PAT != '' }}
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        uses: actions/checkout@v4
+        with:
+          repository: lordwilsonDev/msb-v3
+          token: ${{ secrets.GH_PAT }}
+          path: msb-v3
+
+      - name: Checkout agent-reach (strict-gate evidence)
+        if: ${{ env.GH_PAT != '' }}
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        uses: actions/checkout@v4
+        with:
+          repository: lordwilsonDev/agent-reach
+          token: ${{ secrets.GH_PAT }}
+          path: agent-reach
+
+      - name: Checkout sovereign-mcp-os (strict-gate evidence)
+        if: ${{ env.GH_PAT != '' }}
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        uses: actions/checkout@v4
+        with:
+          repository: lordwilsonDev/sovereign-mcp-os
+          token: ${{ secrets.GH_PAT }}
+          path: sovereign-mcp-os
+
+      - name: Checkout sovereign-outcome-engine (strict-gate evidence)
+        if: ${{ env.GH_PAT != '' }}
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        uses: actions/checkout@v4
+        with:
+          repository: lordwilsonDev/sovereign-outcome-engine
+          token: ${{ secrets.GH_PAT }}
+          path: sovereign-outcome-engine
+
       - name: run_factory.py --self-test (three env boundaries)
         run: python scripts/run_factory.py --self-test
 
@@ -77,11 +123,35 @@ jobs:
           python -c "import json; g=json.load(open('${{ github.workspace }}/nexus/artifacts/hygiene/factory_gate.json'))['RELEASE_VERDICT']; print('gate:', g['release_verdict'], '| regression:', g['regression_passed'], '| violations:', g['artifact_schema_violations'], '| unknowns:', len(g['unresolved_unknowns'])); assert g['release_verdict']=='PASS', 'full gate not PASS'"
 
       # Meta-move canary: status is DERIVED from evidence, never asserted.
-      # --check exits 1 if any project whose artifacts are PRESENT (here:
-      # domain-router + nexus, checked out above) is FAILING; absent
-      # projects report UNVERIFIED and are non-fatal. Also proves the
-      # generator emits a well-formed status.json.
+      # Ungated on purpose — this proves the generator emits a well-formed
+      # status.json on EVERY push, with or without the GH_PAT secret.
       - name: Status canary (derive, don't assert)
         run: |
           python scripts/status_report.py --check
           python -c "import json; d=json.load(open('artifacts/status/status.json')); assert d['projects'], 'status.json must list projects'; print('status.json OK — aggregate:', d['verdict'])"
+
+      # Meta-move gate: status is DERIVED from evidence, never asserted.
+      # --strict exits 1 if ANY evaluated project is below VERIFIED (FAILING/
+      # UNVERIFIED/STALE) — so a project whose committed gate evidence went
+      # missing or flipped to FAILED fails this push. Scoped via --only to the
+      # five repos checked out above (list must track PROJECTS in
+      # scripts/status_report.py — the canonical registry); domain-router and
+      # skill-orchestration-os are excluded because their evidence is not
+      # committed (both are enforced by their own workflows: domain-router's
+      # routing-gate, skill-os's smoke suite). MSB_STATUS_HOME rebases the
+      # constellation onto the checkout workspace.
+      #
+      # NOTE — what strict CAN and CANNOT prove in CI: a fresh checkout sets
+      # every file's mtime to checkout time, so the STALE checks (evidence
+      # predates last commit; evidence older than 7 days) are inert here.
+      # CI strict therefore enforces "committed evidence exists + says PASS";
+      # evidence CURRENCY is owned by each repo's own factory-gate workflow,
+      # which re-runs the real gate on every push to that repo.
+      - name: Strict constellation gate (UNVERIFIED/FAILING evidence fails)
+        if: ${{ env.GH_PAT != '' }}
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+          MSB_STATUS_HOME: ${{ github.workspace }}
+        run: |
+          python scripts/status_report.py --strict \
+            --only msb-v3,agent-reach,sovereign-mcp-os,sovereign-outcome-engine,nexus

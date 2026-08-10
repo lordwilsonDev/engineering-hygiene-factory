@@ -20,9 +20,12 @@ Status derivation (the only truth table):
 `--check` exits 1 if any project whose artifacts are PRESENT is FAILING (or
 the generator itself errors) — the CI canary. Absent projects are reported
 UNVERIFIED, not fatal (CI runners only have some repos checked out).
-`--strict` is the local, constellation-wide variant: exits 1 on ANY state
-below VERIFIED (FAILING, UNVERIFIED, STALE) — use it where all repos exist
-and "not red" must mean "green and current".
+`--strict` exits 1 on ANY state below VERIFIED (FAILING, UNVERIFIED,
+STALE) — use it where all evaluated repos exist and "not red" must mean
+"green and current". `--only a,b` scopes evaluation to named projects (and
+therefore which projects --strict can fail on) — CI uses it to gate exactly
+the repos it checked out. Repos resolve under MSB_STATUS_HOME (default ~),
+so CI can point the constellation at its checkout workspace.
 
 Outputs: <factory>/STATUS.md (human) + <factory>/artifacts/status/status.json
 (machine). Optional `--with-ci` appends the last GitHub Actions factory-gate
@@ -48,14 +51,40 @@ DEFAULT_STALE_DAYS = 7
 # The constellation: name -> {repo path, GitHub slug (for --with-ci)}.
 # Evidence lives in <repo>/artifacts/hygiene/.
 PROJECTS: list[dict[str, str]] = [
-    {"name": "msb-v3", "repo": str(Path.home() / "msb-v3"), "slug": "lordwilsonDev/msb-v3"},
-    {"name": "agent-reach", "repo": str(Path.home() / "agent-reach"), "slug": "lordwilsonDev/agent-reach"},
-    {"name": "sovereign-mcp-os", "repo": str(Path.home() / "sovereign-mcp-os"), "slug": "lordwilsonDev/sovereign-mcp-os"},
-    {"name": "sovereign-outcome-engine", "repo": str(Path.home() / "sovereign-outcome-engine"), "slug": "lordwilsonDev/sovereign-outcome-engine"},
-    {"name": "nexus", "repo": str(Path.home() / "nexus"), "slug": "lordwilsonDev/nexus"},
+    {"name": "msb-v3", "repo": "msb-v3", "slug": "lordwilsonDev/msb-v3"},
+    {"name": "agent-reach", "repo": "agent-reach", "slug": "lordwilsonDev/agent-reach"},
+    {"name": "sovereign-mcp-os", "repo": "sovereign-mcp-os", "slug": "lordwilsonDev/sovereign-mcp-os"},
+    {"name": "sovereign-outcome-engine", "repo": "sovereign-outcome-engine", "slug": "lordwilsonDev/sovereign-outcome-engine"},
+    {"name": "nexus", "repo": "nexus", "slug": "lordwilsonDev/nexus"},
     {"name": "domain-router", "repo": str(Path.home() / ".hermes" / "domain-router"), "slug": "lordwilsonDev/domain-router"},
     {"name": "skill-orchestration-os", "repo": str(Path.home() / ".hermes" / "skills" / "skill-orchestration-os"), "slug": "lordwilsonDev/skill-orchestration-os"},
 ]
+
+def repo_root() -> Path:
+    """Base directory for bare-name project repos (MSB_STATUS_HOME).
+
+    Empty/whitespace values are treated as unset (falls back to ~) so a
+    stale or mis-set env var can never silently rebase repos onto the
+    current working directory.
+    """
+    value = os.environ.get("MSB_STATUS_HOME", "").strip()
+    return Path(value) if value else Path.home()
+
+
+def repo_path(name: str) -> Path:
+    """Resolve a project's repo directory.
+
+    Absolute paths in PROJECTS (and test overrides) win as-is; bare relative
+    names (the constellation repos checked out by CI) resolve under
+    MSB_STATUS_HOME so the factory's own self-test can gate the whole
+    constellation from fresh checkouts.
+    """
+    for cfg in PROJECTS:
+        if cfg["name"] == name:
+            repo = cfg.get("repo", name)
+            p = Path(repo)
+            return p if p.is_absolute() else repo_root() / p
+    return repo_root() / name
 
 # Status ordering for the aggregate verdict: worse wins.
 _STATUS_WEIGHT = {"FAILING": 0, "UNVERIFIED": 1, "STALE": 2, "VERIFIED": 3}
@@ -205,10 +234,22 @@ def derive_state(gate: dict | None, aggregate: dict | None,
     return "VERIFIED", reasons
 
 
-def build_status(with_ci: bool = False, stale_seconds: int = DEFAULT_STALE_DAYS * 86400) -> dict:
+def build_status(with_ci: bool = False, stale_seconds: int = DEFAULT_STALE_DAYS * 86400,
+                 only: list[str] | None = None) -> dict:
+    """Derive every project's state from its own evidence artifacts.
+
+    `only` scopes the evaluation to a subset of PROJECTS (by name) — used by
+    CI to gate exactly the repos it has checked out, so absent evidence in
+    repos covered by their own workflows (skill-orchestration-os has no
+    factory gate by design; domain-router's evidence lives outside the
+    checkout) can never turn the strict gate permanently red.
+    """
+    names = set(only) if only else None
     projects: list[dict] = []
     for cfg in PROJECTS:
-        repo = Path(cfg["repo"])
+        if names is not None and cfg["name"] not in names:
+            continue
+        repo = repo_path(cfg["name"])
         evidence = repo / "artifacts" / "hygiene"
         gate_path = evidence / "factory_gate.json"
         agg_path = evidence / "hygiene_aggregate.json"
@@ -314,11 +355,22 @@ def main(argv: list[str] | None = None) -> int:
                         help="append last GitHub factory-gate conclusion per project (needs gh)")
     parser.add_argument("--stale-days", type=int, default=DEFAULT_STALE_DAYS,
                         help="evidence older than this is STALE (default 7)")
+    parser.add_argument("--only", type=str, default=None,
+                        help="comma-separated project names to evaluate (CI scoping); "
+                             "default: all projects")
     args = parser.parse_args(argv)
 
+    only = [n.strip() for n in args.only.split(",") if n.strip()] if args.only else None
+    if only:
+        known = {cfg["name"] for cfg in PROJECTS}
+        unknown = [n for n in only if n not in known]
+        if unknown:
+            print(f"WARN: --only names not in PROJECTS (ignored): {unknown}",
+                  file=sys.stderr)
     try:
         status = build_status(with_ci=args.with_ci,
-                              stale_seconds=args.stale_days * 86400)
+                              stale_seconds=args.stale_days * 86400,
+                              only=only)
     except Exception as exc:  # noqa: BLE001
         print(f"status generator failed: {type(exc).__name__}: {exc}")
         return 1
