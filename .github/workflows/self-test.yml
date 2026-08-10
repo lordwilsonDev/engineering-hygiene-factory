@@ -118,7 +118,7 @@ jobs:
           MSB_REPO: ${{ github.workspace }}/nexus
           MSB_PYTHON: python
         run: |
-          pip install -q pytest fastapi uvicorn rich prompt-toolkit pyyaml ollama
+          pip install -q pytest pytest-cov fastapi uvicorn rich prompt-toolkit pyyaml ollama
           python scripts/run_factory.py --project "${{ github.workspace }}/nexus"
           python -c "import json; g=json.load(open('${{ github.workspace }}/nexus/artifacts/hygiene/factory_gate.json'))['RELEASE_VERDICT']; print('gate:', g['release_verdict'], '| regression:', g['regression_passed'], '| violations:', g['artifact_schema_violations'], '| unknowns:', len(g['unresolved_unknowns'])); assert g['release_verdict']=='PASS', 'full gate not PASS'"
 
