@@ -3,3 +3,6 @@ __pycache__/
 artifacts/
 reports/
 data/
+.mutmut-cache/
+mutants/
+.mutmut-scratch/

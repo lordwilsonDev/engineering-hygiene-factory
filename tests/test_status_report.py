@@ -10,21 +10,20 @@ last commit) must map to exactly the state the table promises.
 from __future__ import annotations
 
 import json
-import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
-
-import status_report as sr  # noqa: E402
+import status_report as sr  # noqa: E402  (sys.path via root conftest.py)
 
 
-def _gate(verdict: str = "PASS") -> dict:
+def _gate(verdict: str = "PASS", coverage: dict | None = None) -> dict:
     """factory_gate.json in its real (UPPERCASE) schema."""
     return {
         "RELEASE_VERDICT": {"release_verdict": verdict, "regression_passed": verdict == "PASS"},
-        "VERIFICATION": {"pytest": {"passed": verdict == "PASS", "summary": "1 passed"}},
+        "VERIFICATION": {
+            "pytest": {"passed": verdict == "PASS", "summary": "1 passed"},
+            **({"coverage": coverage} if coverage is not None else {}),
+        },
     }
 
 
@@ -52,6 +51,40 @@ def test_mutation_score_none_when_artifact_missing(tmp_path):
     repo = tmp_path / "nexus"
     (repo / "artifacts" / "hygiene").mkdir(parents=True)
     assert sr.mutation_score(repo) is None
+
+
+def test_gate_coverage_parses_verification_block():
+    """The coverage column is derived from VERIFICATION.coverage, not asserted."""
+    assert sr.gate_coverage(None) == (None, None)
+    assert sr.gate_coverage(_gate()) == (None, None)  # no coverage block -> None
+    gate = _gate(coverage={"configured": True, "pct": 71.0, "floor_pct": 65.0})
+    assert sr.gate_coverage(gate) == (71.0, 65.0)
+    # configured but unmeasured -> pct None, floor kept
+    gate2 = _gate(coverage={"configured": True, "pct": None, "floor_pct": 50.0})
+    assert sr.gate_coverage(gate2) == (None, 50.0)
+
+
+def test_build_status_surfaces_coverage_column(tmp_path):
+    """build_status + markdown render the measured/floor coverage."""
+    repo = tmp_path / "msb-v3"
+    (repo / "artifacts" / "hygiene").mkdir(parents=True)
+    (repo / "artifacts" / "hygiene" / "factory_gate.json").write_text(
+        json.dumps(_gate(coverage={"configured": True, "pct": 71.0, "floor_pct": 65.0})),
+        encoding="utf-8")
+    (repo / "artifacts" / "hygiene" / "hygiene_aggregate.json").write_text(
+        json.dumps(_agg()), encoding="utf-8")
+
+    old = sr.PROJECTS
+    sr.PROJECTS = [{"name": "msb-v3", "repo": str(repo), "slug": "x/msb"}]
+    try:
+        status = sr.build_status(with_ci=False)
+        entry = status["projects"][0]
+        assert entry["coverage_pct"] == 71.0
+        assert entry["coverage_floor_pct"] == 65.0
+        md = sr.render_markdown(status)
+        assert "| 71.0%/65% |" in md  # measured/floor cell
+    finally:
+        sr.PROJECTS = old
 
 
 def test_build_status_includes_mutation_column(tmp_path):

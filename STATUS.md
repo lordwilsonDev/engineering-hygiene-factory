@@ -1,14 +1,14 @@
 # Constellation Status (derived from evidence)
 
-Generated: `2026-08-10T02:48:24.698193+00:00` by `scripts/status_report.py`
+Generated: `2026-08-10T05:56:08.582651+00:00` by `scripts/status_report.py`
 
 **Nothing here is asserted — every state is derived from each project's `artifacts/hygiene/` gate artifacts and freshness vs its last git commit.** Missing or stale evidence shows as UNVERIFIED/STALE.
 
 Aggregate verdict: **VERIFIED**
 
-| Project | State | Gate | Hygiene | Mutation | pytest | Evidence age | CI (last run) |
-|---|---|---|---|---|---|---|---|
-| msb-v3 | **VERIFIED** | PASS | pass | - | True | 0.0h | - |
+| Project | State | Gate | Hygiene | Mutation | Cov | pytest | Evidence age | CI (last run) |
+|---|---|---|---|---|---|---|---|---|
+| msb-v3 | **VERIFIED** | PASS | pass | - | - | True | 0.0h | - |
 
 ## pytest summaries
 - `msb-v3`: 1 passed

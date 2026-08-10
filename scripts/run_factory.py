@@ -274,7 +274,7 @@ def now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat()
 
 
-def load_suite_config(project: Path) -> tuple[dict[str, dict[str, str]], bool, str]:
+def load_suite_config(project: Path) -> tuple[dict[str, dict[str, str]], bool, str, dict]:
     """Load a per-project hygiene-suite config, with msb-v3 as the default.
 
     A project can declare <project>/scripts/hygiene/suite.json to describe
@@ -287,28 +287,47 @@ def load_suite_config(project: Path) -> tuple[dict[str, dict[str, str]], bool, s
             ...
           },
           "live_auth": false,        // omit/true for projects with a server to probe
-          "pytest_target": "tests/"  // optional; where pytest runs (default tests/)
+          "pytest_target": "tests/", // optional; where pytest runs (default tests/)
+          "coverage_floor": 0.65,     // optional; minimum line coverage pct (0-1)
+          "coverage_source": "src/msb_v3"  // optional; pytest --cov target(s)
         }
 
+    `experiments` may be ABSENT entirely (e.g. a suite.json that only adds
+    the coverage gate and wants the built-in msb-v3 SUITE for members).
     Projects without a suite.json fall back to the built-in msb-v3 SUITE.
-    Returns (experiments_map, live_auth_required, pytest_target).
+    Returns (experiments_map, live_auth_required, pytest_target, coverage)
+    where coverage = {"floor": float, "source": str|None} (default = no gate).
     """
+    coverage = {"floor": float(os.environ.get("MSB_COVERAGE_FLOOR", 0.0)),
+                "source": None}
     cfg_path = project / "scripts" / "hygiene" / "suite.json"
     if cfg_path.exists():
         try:
             cfg = json.loads(cfg_path.read_text())
         except json.JSONDecodeError:
             print(f"[run_factory] WARN: malformed {cfg_path}; falling back to msb-v3 SUITE")
-            return dict(SUITE), True, "tests/"
-        experiments = cfg.get("experiments")
+            return dict(SUITE), True, "tests/", coverage
         target = str(cfg.get("pytest_target", "tests/"))
+        if "coverage_source" in cfg:
+            try:
+                coverage = {"floor": float(cfg.get("coverage_floor", 0.0)),
+                            "source": str(cfg["coverage_source"])}
+            except (TypeError, ValueError):
+                print(f"[run_factory] WARN: bad coverage config in {cfg_path}; gate off")
+                coverage = {"floor": 0.0, "source": None}
+        experiments = cfg.get("experiments")
+        live = bool(cfg.get("live_auth", True))
+        if "experiments" not in cfg:
+            # Config exists but only for non-suite keys (e.g. the coverage
+            # gate) — fall back to the built-in SUITE without a scary WARN.
+            return dict(SUITE), live, target, coverage
         if isinstance(experiments, dict) and experiments:
-            return experiments, bool(cfg.get("live_auth", True)), target
+            return experiments, live, target, coverage
         # A config typo must not silently re-enable the auth probe the project
         # opted out of — preserve the declared live_auth flag on the fallback.
         print(f"[run_factory] WARN: {cfg_path} has no usable experiments; falling back to msb-v3 SUITE")
-        return dict(SUITE), bool(cfg.get("live_auth", True)), target
-    return dict(SUITE), True, "tests/"
+        return dict(SUITE), live, target, coverage
+    return dict(SUITE), True, "tests/", coverage
 
 
 def load_dotenv(project: Path) -> dict[str, str]:
@@ -326,7 +345,8 @@ def load_dotenv(project: Path) -> dict[str, str]:
     return env
 
 
-def run_pytest(project: Path, target: str = "tests/") -> dict[str, Any]:
+def run_pytest(project: Path, target: str = "tests/",
+               coverage: dict | None = None) -> dict[str, Any]:
     """Run the project's real pytest suite and report whether it passed.
 
     This is the evidence behind `regression_passed`: previously the factory
@@ -336,25 +356,66 @@ def run_pytest(project: Path, target: str = "tests/") -> dict[str, Any]:
     suite.json `pytest_target` key (e.g. a repo whose tests live at the root).
     A suite that fails or times out keeps regression_passed=False and explains
     why.
+
+    When `coverage` declares a source, the same run also measures line
+    coverage (`--cov <source> --cov-report=term`) and the TOTAL percentage is
+    parsed into `coverage_pct` — the evidence behind the coverage-floor gate.
     """
+    args = [PY, "-m", "pytest", target, "-q"]
+    cov_source = (coverage or {}).get("source")
+    if cov_source:
+        for src in str(cov_source).split(","):
+            if src.strip():
+                args += ["--cov", src.strip()]
+        args.append("--cov-report=term")
     started = dt.datetime.now(dt.timezone.utc)
     try:
-        proc = _spawn([PY, "-m", "pytest", target, "-q"], project=project, timeout=900)
+        proc = _spawn(args, project=project, timeout=900)
     except subprocess.TimeoutExpired:
         return {"passed": False, "summary": "pytest timed out after 900s", "duration_s": 900}
     duration_s = int((dt.datetime.now(dt.timezone.utc) - started).total_seconds())
     # Prefer the pytest count line ("N passed / N failed ...") as evidence;
     # the last non-empty line may be a warnings footer instead.
     summary = f"pytest exit {proc.returncode}"
-    for line in ((proc.stdout or "") + "\n" + (proc.stderr or "")).splitlines():
+    text = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    for line in text.splitlines():
         if re.search(r"\d+\s+(passed|failed|error)", line):
             summary = line.strip()
             break
-    return {
+    # coverage.py's term report ends with a TOTAL row: "TOTAL  1234  567  88%"
+    m = re.search(r"TOTAL\s+\d+\s+\d+\s+(\d+)%", text)
+    coverage_pct = float(m.group(1)) if m else None
+    result: dict[str, Any] = {
         "passed": proc.returncode == 0,
         "summary": summary[:300],
         "duration_s": duration_s,
     }
+    if coverage_pct is not None:
+        result["coverage_pct"] = coverage_pct
+        result["coverage_source"] = str(cov_source)
+    return result
+
+
+def assess_coverage(regression: dict, coverage: dict | None) -> dict[str, Any]:
+    """Evaluate the per-project coverage floor. Pure and testable.
+
+    Not configured (no source declared) -> met None: recorded, never a fail.
+    Not measured (pytest ran without --cov) -> met False with a reason.
+    Measured below the floor -> met False with the measured-vs-floor gap.
+    """
+    if not coverage or not coverage.get("source"):
+        return {"met": None, "detail": "coverage gate not configured"}
+    pct = regression.get("coverage_pct")
+    if pct is None:
+        return {"met": False,
+                "detail": f"coverage not measured for {coverage['source']} "
+                          "(pytest ran without --cov or no TOTAL row)"}
+    floor_pct = float(coverage.get("floor", 0.0)) * 100
+    met = float(pct) >= floor_pct
+    gap = f"{floor_pct - float(pct):.1f} pts below floor" if not met else "met"
+    return {"met": met,
+            "detail": f"coverage {float(pct):.1f}% vs floor {floor_pct:.0f}% "
+                      f"({coverage['source']}) — {gap}"}
 
 
 def verify_live_auth(project: Path, live_auth: bool = True) -> dict[str, Any]:
@@ -570,7 +631,7 @@ def main() -> int:
     # Per-project suite config: experiments map + whether a live server auth
     # probe applies + where pytest runs. Falls back to the built-in msb-v3
     # SUITE (pytest target defaults to tests/).
-    suite_map, live_auth, pytest_target = load_suite_config(project)
+    suite_map, live_auth, pytest_target, coverage = load_suite_config(project)
     runner_files = [m.get("runner") for m in suite_map.values() if m.get("runner")]
 
     # Evidence for the two cross-cutting gate fields: real pytest run and a
@@ -583,10 +644,12 @@ def main() -> int:
     # regression unknown). The target defaults to tests/ but is per-project
     # overridable via suite.json `pytest_target` (e.g. root-level test files).
     pytest_path = project / pytest_target
-    regression = run_pytest(project, pytest_target) if pytest_path.exists() else {
+    regression = run_pytest(project, pytest_target, coverage) if pytest_path.exists() else {
         "passed": False, "summary": f"no {pytest_target} in project"}
+    cov = assess_coverage(regression, coverage)
     auth = verify_live_auth(project, live_auth)
     print(f"[run_factory] pytest passed={regression['passed']} ({regression.get('summary')})")
+    print(f"[run_factory] coverage met={cov['met']} ({cov['detail']})")
     print(f"[run_factory] live auth verified={auth['verified']} ({auth.get('detail')})")
 
     # Record the scrub in the gate so the zero-spend guarantee is self-
@@ -621,6 +684,18 @@ def main() -> int:
         suite_verdict = (suite.get("aggregate") or {}).get("factory_verdict", "unknown")
 
     gate = build_gate(results, suite_verdict, project, regression, auth, runner_files)
+    # Coverage floor: enforced, not advisory. A project that DECLARES a floor
+    # and misses it gets the unknown listed AND the verdict forced to FAILED —
+    # "green means green" applies to the coverage gate too. Projects without a
+    # declared floor get met=None (recorded, non-fatal).
+    gate["coverage_floor_met"] = cov["met"]
+    if cov["met"] is False:
+        gate.setdefault("unresolved_unknowns", []).append(
+            f"coverage floor not met: {cov['detail']}")
+        if gate["release_verdict"] != "FAILED":
+            gate["release_verdict"] = "FAILED"
+            gate.setdefault("notes", []).append(
+                "coverage floor not met — release verdict forced to FAILED")
     # Record the auth opt-out (if any) so a scoped-out field is never read as
     # "failed the probe" — it is a declared non-applicable.
     if auth.get("verified") is None:
@@ -654,6 +729,10 @@ def main() -> int:
         "VERIFICATION": {
             "pytest": {"passed": regression["passed"], "summary": regression.get("summary"),
                         "duration_s": regression.get("duration_s")},
+            "coverage": {"configured": bool(coverage.get("source")),
+                          "source": coverage.get("source"),
+                          "floor_pct": float(coverage.get("floor", 0.0)) * 100,
+                          "pct": regression.get("coverage_pct"), "met": cov["met"]},
             "live_auth": {"verified": auth["verified"], "detail": auth.get("detail"),
                            "correct_secret": auth.get("correct_secret"),
                            "wrong_secret": auth.get("wrong_secret"),

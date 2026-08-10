@@ -18,15 +18,11 @@ check in any environment.
 
 import ast
 import os
-import sys
 from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
-
-import run_factory as rf  # noqa: E402
+import run_factory as rf  # noqa: E402  (sys.path via root conftest.py)
 
 _D03_DEFAULT = (
     Path.home() / ".hermes" / "domain-router" / "scripts" / "hygiene"

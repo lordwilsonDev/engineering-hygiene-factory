@@ -154,6 +154,25 @@ def mutation_score(repo: Path) -> float | None:
     return score if isinstance(score, (int, float)) else None
 
 
+def gate_coverage(gate: dict | None) -> tuple[float | None, float | None]:
+    """(measured_pct, floor_pct) from the gate's VERIFICATION.coverage block.
+
+    The coverage-floor gate is derived evidence like everything else: the
+    percentage the project's last in-factory pytest --cov run measured, and
+    the floor it declared. None when the project has no coverage config.
+    """
+    if not gate:
+        return None, None
+    ver = gate.get("VERIFICATION") or {}
+    cov = ver.get("coverage") or {}
+    if not isinstance(cov, dict) or not cov.get("configured"):
+        return None, None
+    pct = cov.get("pct")
+    floor = cov.get("floor_pct")
+    return (float(pct) if isinstance(pct, (int, float)) else None,
+            float(floor) if isinstance(floor, (int, float)) else None)
+
+
 def derive_state(gate: dict | None, aggregate: dict | None,
                  commit_ts: float | None, gate_mtime: float,
                  stale_seconds: int) -> tuple[str, list[str]]:
@@ -189,6 +208,7 @@ def build_status(with_ci: bool = False, stale_seconds: int = DEFAULT_STALE_DAYS 
             gate, aggregate, commit_ts, artifact_mtime(gate_path), stale_seconds)
 
         pytest_passed, pytest_summary = gate_pytest(gate)
+        coverage_pct, coverage_floor = gate_coverage(gate)
         entry: dict = {
             "project": cfg["name"],
             "repo": str(repo),
@@ -196,6 +216,8 @@ def build_status(with_ci: bool = False, stale_seconds: int = DEFAULT_STALE_DAYS 
             "gate": gate_verdict(gate),
             "hygiene": (aggregate or {}).get("factory_verdict"),
             "mutation_score_pct": mutation_score(repo),
+            "coverage_pct": coverage_pct,
+            "coverage_floor_pct": coverage_floor,
             "pytest_passed": pytest_passed,
             "pytest_summary": pytest_summary,
             "unresolved_unknowns": gate_unknowns(gate),
@@ -232,15 +254,23 @@ def render_markdown(status: dict) -> str:
         "",
         f"Aggregate verdict: **{status['verdict']}**",
         "",
-        "| Project | State | Gate | Hygiene | Mutation | pytest | Evidence age | CI (last run) |",
-        "|---|---|---|---|---|---|---|---|",
+        "| Project | State | Gate | Hygiene | Mutation | Cov | pytest | Evidence age | CI (last run) |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for p in status["projects"]:
         mutation = p.get("mutation_score_pct")
         mutation_cell = f"{mutation}%" if mutation is not None else "-"
+        cov = p.get("coverage_pct")
+        cov_floor = p.get("coverage_floor_pct")
+        if cov is None:
+            cov_cell = "-"  # no coverage evidence at all (even with a declared floor)
+        elif cov_floor is None:
+            cov_cell = f"{cov}%"
+        else:
+            cov_cell = f"{cov}%/{cov_floor:.0f}%"
         lines.append(
             f"| {p['project']} | **{p['state']}** | {p['gate'] or '-'} | "
-            f"{p['hygiene'] or '-'} | {mutation_cell} | "
+            f"{p['hygiene'] or '-'} | {mutation_cell} | {cov_cell} | "
             f"{p['pytest_passed'] if p['pytest_passed'] is not None else '-'} | "
             f"{p['evidence_age_h']}h | {p.get('ci') or '-'} |"
         )

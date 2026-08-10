@@ -11,13 +11,8 @@ not just in a session log.
 
 import os
 import subprocess
-import sys
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
-
-import run_factory as rf  # noqa: E402
+import run_factory as rf  # noqa: E402  (sys.path via root conftest.py)
 
 
 def _leaky_spawn(args, project=None, timeout=900):
