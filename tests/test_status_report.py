@@ -10,6 +10,7 @@ last commit) must map to exactly the state the table promises.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -273,7 +274,11 @@ def test_evidence_commit_keeps_repo_verified(tmp_path, monkeypatch):
 
 
 def test_code_commit_after_gate_is_stale(tmp_path, monkeypatch):
-    """The flip side: a REAL code commit after the gate still reads STALE."""
+    """The flip side: a REAL code commit after the gate still reads STALE.
+
+    Deterministic by construction: the gate artifact mtime is pinned to a
+    known-past timestamp with os.utime, so the subsequent code commit (whose
+    timestamp is now) is guaranteed newer — no sleeps, no clock races."""
     repo = _make_repo(tmp_path)
     (repo / "app.py").write_text("x = 1\n", encoding="utf-8")
     _git(repo, "add", "app.py")
@@ -282,8 +287,9 @@ def test_code_commit_after_gate_is_stale(tmp_path, monkeypatch):
     _git(repo, "add", "artifacts")
     _git(repo, "commit", "-q", "-m", "evidence")
 
-    # Real code moves after the proof: touch app.py and commit again.
-    time.sleep(1.1)  # ensure the code commit lands after the gate mtime
+    # Pin the gate to a fixed past mtime, then move real code past the proof.
+    past = time.time() - 3600
+    os.utime(gate, (past, past))
     (repo / "app.py").write_text("x = 2\n", encoding="utf-8")
     _git(repo, "add", "app.py")
     _git(repo, "commit", "-q", "-m", "more code")

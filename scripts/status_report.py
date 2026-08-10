@@ -79,27 +79,25 @@ def read_json(path: Path) -> dict | None:
 def last_commit_time(repo: Path,
                      evidence_rel: str = "artifacts/hygiene") -> float | None:
     """Epoch seconds of the repo's last NON-EVIDENCE commit; None if not a git
-    repo.
+    repo or every commit touches only evidence.
 
-    The evidence directory is excluded from the freshness query so committing
-    gate artifacts never makes the evidence itself look stale — committing
-    proof must not invalidate it (STALE means "code moved past the proof", not
-    "proof was versioned"). If every commit touches only evidence, falls back
-    to the plain last commit so the age window still applies.
+    The evidence directory is excluded (via the `:(exclude)` magic pathspec,
+    git >= 2.13) so committing gate artifacts never makes the evidence itself
+    look stale — committing proof must not invalidate it. STALE means "code
+    moved past the proof", not "proof was versioned". The age-window check
+    uses the artifact mtime directly, so a repo with no code commits needs no
+    fallback here: no code commit -> no "code moved past the proof" signal.
     """
-    queries = [
-        ["git", "-C", str(repo), "log", "-1", "--format=%ct", "--",
-         f":(exclude){evidence_rel}"],
-        ["git", "-C", str(repo), "log", "-1", "--format=%ct"],
-    ]
-    for query in queries:
-        try:
-            proc = subprocess.run(query, capture_output=True, text=True,
-                                  timeout=10, check=False)
-            if proc.returncode == 0 and proc.stdout.strip():
-                return float(proc.stdout.strip())
-        except (subprocess.SubprocessError, ValueError, OSError):
-            pass
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo), "log", "-1", "--format=%ct", "--",
+             f":(exclude){evidence_rel}"],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            return float(proc.stdout.strip())
+    except (subprocess.SubprocessError, ValueError, OSError):
+        pass
     return None
 
 
