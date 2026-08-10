@@ -13,6 +13,8 @@ Status derivation (the only truth table):
     gate artifact missing           -> UNVERIFIED  (no evidence at all)
     gate verdict != PASS            -> FAILING     (gate ran and failed)
     hygiene verdict == fail         -> FAILING     (weakest leg failed)
+    recorded git_head != current code HEAD -> STALE (code moved past the proof;
+                                                      works from fresh CI checkouts)
     evidence older than last NON-EVIDENCE commit -> STALE  (code moved past the proof)
     evidence older than window      -> STALE       (nobody's run the gate lately)
     otherwise                       -> VERIFIED    (green AND current)
@@ -130,6 +132,38 @@ def last_commit_time(repo: Path,
     return None
 
 
+def code_head(repo: Path,
+              evidence_rel: str = "artifacts/hygiene") -> str | None:
+    """Full hash of the repo's last NON-EVIDENCE commit; None if not git.
+
+    Mirrors last_commit_time's pathspec. This is the hash-based freshness
+    check that WORKS from a fresh CI checkout: factory_gate.json records
+    VERIFICATION.git_head (the commit the gate ran against), and status
+    compares it to code_head(repo) — a mismatch means code moved past the
+    proof even when file mtimes are all checkout-time.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo), "log", "-1", "--format=%H", "--",
+             f":(exclude){evidence_rel}"],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            return proc.stdout.strip()
+    except (subprocess.SubprocessError, OSError):
+        pass
+    return None
+
+
+def recorded_head(gate: dict | None) -> str | None:
+    """VERIFICATION.git_head from the gate artifact (the commit it ran on)."""
+    if not gate:
+        return None
+    ver = gate.get("VERIFICATION") or {}
+    head = ver.get("git_head") if isinstance(ver, dict) else None
+    return head if isinstance(head, str) and head else None
+
+
 def ci_conclusion(slug: str) -> str | None:
     """Last factory-gate CI conclusion for a repo slug (best-effort)."""
     if not shutil.which("gh"):
@@ -215,8 +249,15 @@ def gate_coverage(gate: dict | None) -> tuple[float | None, float | None]:
 
 def derive_state(gate: dict | None, aggregate: dict | None,
                  commit_ts: float | None, gate_mtime: float,
-                 stale_seconds: int) -> tuple[str, list[str]]:
-    """Truth table above. Returns (state, reasons)."""
+                 stale_seconds: int, head_now: str | None = None,
+                 head_recorded: str | None = None) -> tuple[str, list[str]]:
+    """Truth table above. Returns (state, reasons).
+
+    `head_now`/`head_recorded` are the repo's current code HEAD hash and the
+    hash the gate recorded (VERIFICATION.git_head). When both exist and
+    differ, the code moved past the proof even if mtimes look fresh — the
+    hash check is what makes staleness detectable from a fresh CI checkout.
+    """
     reasons: list[str] = []
     if gate is None:
         return "UNVERIFIED", ["no factory_gate.json artifact"]
@@ -225,6 +266,9 @@ def derive_state(gate: dict | None, aggregate: dict | None,
     agg_verdict = (aggregate or {}).get("factory_verdict")
     if agg_verdict == "fail":
         return "FAILING", ["hygiene aggregate verdict = fail"]
+    if head_now and head_recorded and head_now != head_recorded:
+        return "STALE", [f"gate recorded commit {head_recorded[:8]}, "
+                         f"code HEAD is {head_now[:8]} (code moved past the proof)"]
     if commit_ts is not None and gate_mtime and gate_mtime < commit_ts:
         return "STALE", ["gate artifact predates last commit"]
     age = now_utc().timestamp() - gate_mtime
@@ -257,7 +301,8 @@ def build_status(with_ci: bool = False, stale_seconds: int = DEFAULT_STALE_DAYS 
         aggregate = read_json(agg_path)
         commit_ts = last_commit_time(repo)
         state, reasons = derive_state(
-            gate, aggregate, commit_ts, artifact_mtime(gate_path), stale_seconds)
+            gate, aggregate, commit_ts, artifact_mtime(gate_path), stale_seconds,
+            head_now=code_head(repo), head_recorded=recorded_head(gate))
 
         pytest_passed, pytest_summary = gate_pytest(gate)
         coverage_pct, coverage_floor = gate_coverage(gate)

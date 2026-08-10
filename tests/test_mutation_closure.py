@@ -152,6 +152,53 @@ def test_extract_json_object_empty_and_garbage() -> None:
 
 # ══════════════════════════════════ run_suite ════════════════════════════════
 
+# ════════════════════════════════ code_head ════════════════════════════════
+
+def test_code_head_records_last_code_commit(tmp_path) -> None:
+    """The gate records the exact code commit it ran against (git_head),
+    ignoring evidence-only commits — the hash that makes staleness detectable
+    from a fresh CI checkout."""
+    _git_init(tmp_path)
+    (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
+    _git_add(tmp_path, "app.py")
+    _git_commit(tmp_path, "code")
+    h1 = rf.code_head(tmp_path)
+    assert h1 and len(h1) == 40
+
+    # Evidence-only commit must not change the recorded head.
+    (tmp_path / "artifacts" / "hygiene").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "artifacts" / "hygiene" / "factory_gate.json").write_text("{}")
+    _git_add(tmp_path, "artifacts")
+    _git_commit(tmp_path, "evidence")
+    assert rf.code_head(tmp_path) == h1
+
+    # Real code commit moves it.
+    (tmp_path / "app.py").write_text("x = 2\n", encoding="utf-8")
+    _git_add(tmp_path, "app.py")
+    _git_commit(tmp_path, "more code")
+    assert rf.code_head(tmp_path) != h1
+
+
+def test_code_head_none_when_not_git(tmp_path) -> None:
+    assert rf.code_head(tmp_path) is None
+
+
+def _git_init(repo: Path) -> None:
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True,
+                   capture_output=True, timeout=30)
+
+
+def _git_add(repo: Path, path: str) -> None:
+    subprocess.run(["git", "-C", str(repo), "add", path], check=True,
+                   capture_output=True, timeout=30)
+
+
+def _git_commit(repo: Path, msg: str) -> None:
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=t",
+                    "-c", "user.email=t@t", "commit", "-q", "-m", msg],
+                   check=True, capture_output=True, timeout=30)
+
+
 def test_run_suite_no_runner(tmp_path) -> None:
     res = rf.run_suite(tmp_path)
     assert res["available"] is False

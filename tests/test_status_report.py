@@ -321,6 +321,68 @@ def test_repo_path_relative_resolves_under_msb_status_home(tmp_path, monkeypatch
         sr.PROJECTS = old
 
 
+def test_recorded_head_parsing():
+    """VERIFICATION.git_head must be read as the recorded commit; missing or
+    malformed values yield None (falling back to mtime freshness)."""
+    assert sr.recorded_head(None) is None
+    assert sr.recorded_head({"VERIFICATION": {"git_head": "abc123"}}) == "abc123"
+    assert sr.recorded_head({"VERIFICATION": {}}) is None
+    assert sr.recorded_head({"VERIFICATION": "not-a-dict"}) is None
+    assert sr.recorded_head({"VERIFICATION": {"git_head": ""}}) is None
+
+
+def test_derive_state_hash_mismatch_is_stale():
+    """Code moved past the proof: recorded git_head != current code HEAD is
+    STALE even when the mtimes look fresh (the CI case, where checkout resets
+    all mtimes to now)."""
+    state, reasons = sr.derive_state(
+        _gate(), {"factory_verdict": "pass"}, None, time.time(),
+        7 * 86400, head_now="0fedcba987654321", head_recorded="abcdef0123456789")
+    assert state == "STALE"
+    assert "code moved past the proof" in reasons[0]
+    assert "abcdef01" in reasons[0] and "0fedcba9" in reasons[0]
+
+
+def test_derive_state_hash_match_is_not_stale():
+    """Recorded git_head == current code HEAD -> not stale by hash (VERIFIED
+    unless another check fires)."""
+    state, _ = sr.derive_state(
+        _gate(), {"factory_verdict": "pass"}, None, time.time(),
+        7 * 86400, head_now="abcdef0123456789", head_recorded="abcdef0123456789")
+    assert state == "VERIFIED"
+
+
+def test_derive_state_missing_hash_falls_back_to_mtime():
+    """No recorded git_head (pre-feature evidence) -> hash check skipped, mtime
+    checks still apply."""
+    fresh = time.time()
+    state, _ = sr.derive_state(_gate(), {"factory_verdict": "pass"}, None,
+                               fresh, 7 * 86400)
+    assert state == "VERIFIED"
+    old = time.time() - 30 * 86400
+    state, _ = sr.derive_state(_gate(), {"factory_verdict": "pass"}, None,
+                               old, 7 * 86400)
+    assert state == "STALE"
+
+
+def test_code_head_excludes_evidence_commits(tmp_path):
+    """code_head must ignore evidence-only commits (same pathspec as the
+    mtime check), so committing the gate artifact can't invalidate its own
+    recorded hash."""
+    repo = _make_repo(tmp_path)
+    (repo / "app.py").write_text("x = 1\n", encoding="utf-8")
+    _git(repo, "add", "app.py")
+    _git(repo, "commit", "-q", "-m", "code")
+    code_hash = sr.code_head(repo)
+    assert code_hash and len(code_hash) == 40
+
+    _plant_gate(repo)
+    _git(repo, "add", "artifacts")
+    _git(repo, "commit", "-q", "-m", "evidence")
+    # Evidence-only commit must NOT change the code HEAD hash.
+    assert sr.code_head(repo) == code_hash
+
+
 def test_repo_root_empty_env_falls_back_to_home(tmp_path, monkeypatch):
     """MSB_STATUS_HOME set-but-empty must not rebase repos onto cwd."""
     monkeypatch.setenv("MSB_STATUS_HOME", "   ")

@@ -274,6 +274,27 @@ def now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat()
 
 
+def code_head(project: Path) -> str | None:
+    """Full hash of the project's last NON-EVIDENCE commit; None if not git.
+
+    Mirrors status_report.last_commit_time's pathspec: artifacts/hygiene is
+    excluded so committing gate evidence never invalidates its own recorded
+    hash — the hash only moves when real CODE moves. Recorded in the gate as
+    VERIFICATION.git_head and compared against the repo's current code HEAD
+    by status_report, which makes "evidence predates code" detectable even
+    from a fresh CI checkout (where file mtimes are all checkout time and the
+    mtime-based STALE checks are inert).
+    """
+    try:
+        proc = _spawn(["git", "-C", str(project), "log", "-1", "--format=%H",
+                       "--", ":(exclude)artifacts/hygiene"], timeout=10)
+        if proc.returncode == 0 and proc.stdout.strip():
+            return proc.stdout.strip()
+    except subprocess.SubprocessError:
+        pass
+    return None
+
+
 def load_suite_config(project: Path) -> tuple[dict[str, dict[str, str]], bool, str, dict]:
     """Load a per-project hygiene-suite config, with msb-v3 as the default.
 
@@ -737,6 +758,11 @@ def main() -> int:
                            "correct_secret": auth.get("correct_secret"),
                            "wrong_secret": auth.get("wrong_secret"),
                            "missing_secret": auth.get("missing_secret")},
+            # git_head = the exact code commit this gate ran against (last
+            # NON-EVIDENCE commit). status_report compares it to the repo's
+            # current code HEAD to derive STALE even from a fresh CI checkout
+            # where mtime-based freshness is inert. None = not a git repo.
+            "git_head": code_head(project),
         },
         "SUITE_CONFIG": {
             "source": "<project>/scripts/hygiene/suite.json"

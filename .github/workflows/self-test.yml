@@ -51,6 +51,7 @@ jobs:
           repository: lordwilsonDev/nexus
           token: ${{ secrets.GH_PAT }}
           path: nexus
+          fetch-depth: 0
 
       # The four remaining constellation repos — checked out so the --strict
       # step can gate their committed evidence from fresh clones. Each repo's
@@ -58,6 +59,10 @@ jobs:
       # the factory's strict step checks that every project's committed gate
       # evidence exists AND says PASS (all five: msb-v3, agent-reach,
       # sovereign-mcp-os, sovereign-outcome-engine, nexus).
+      # fetch-depth: 0 is load-bearing for the strict step's git_head
+      # comparison — the evidence commits ARE the repo tips, so a shallow
+      # depth-1 clone has no parent to walk to and code_head() would return
+      # None, silently disabling the hash staleness check.
       - name: Checkout msb-v3 (strict-gate evidence)
         if: ${{ env.GH_PAT != '' }}
         env:
@@ -67,6 +72,7 @@ jobs:
           repository: lordwilsonDev/msb-v3
           token: ${{ secrets.GH_PAT }}
           path: msb-v3
+          fetch-depth: 0
 
       - name: Checkout agent-reach (strict-gate evidence)
         if: ${{ env.GH_PAT != '' }}
@@ -77,6 +83,7 @@ jobs:
           repository: lordwilsonDev/agent-reach
           token: ${{ secrets.GH_PAT }}
           path: agent-reach
+          fetch-depth: 0
 
       - name: Checkout sovereign-mcp-os (strict-gate evidence)
         if: ${{ env.GH_PAT != '' }}
@@ -87,6 +94,7 @@ jobs:
           repository: lordwilsonDev/sovereign-mcp-os
           token: ${{ secrets.GH_PAT }}
           path: sovereign-mcp-os
+          fetch-depth: 0
 
       - name: Checkout sovereign-outcome-engine (strict-gate evidence)
         if: ${{ env.GH_PAT != '' }}
@@ -97,6 +105,7 @@ jobs:
           repository: lordwilsonDev/sovereign-outcome-engine
           token: ${{ secrets.GH_PAT }}
           path: sovereign-outcome-engine
+          fetch-depth: 0
 
       - name: run_factory.py --self-test (three env boundaries)
         run: python scripts/run_factory.py --self-test
@@ -133,21 +142,23 @@ jobs:
       # Meta-move gate: status is DERIVED from evidence, never asserted.
       # --strict exits 1 if ANY evaluated project is below VERIFIED (FAILING/
       # UNVERIFIED/STALE) — so a project whose committed gate evidence went
-      # missing or flipped to FAILED fails this push. Scoped via --only to the
-      # five repos checked out above (list must track PROJECTS in
-      # scripts/status_report.py — the canonical registry); domain-router and
-      # skill-orchestration-os are excluded because their evidence is not
-      # committed (both are enforced by their own workflows: domain-router's
-      # routing-gate, skill-os's smoke suite). MSB_STATUS_HOME rebases the
-      # constellation onto the checkout workspace.
+      # missing, flipped to FAILED, or drifted from its code HEAD fails this
+      # push. Scoped via --only to the five repos checked out above (list must
+      # track PROJECTS in scripts/status_report.py — the canonical registry);
+      # domain-router and skill-orchestration-os are excluded because their
+      # evidence is not committed (both are enforced by their own workflows:
+      # domain-router's routing-gate, skill-os's smoke suite). MSB_STATUS_HOME
+      # rebases the constellation onto the checkout workspace.
       #
       # NOTE — what strict CAN and CANNOT prove in CI: a fresh checkout sets
-      # every file's mtime to checkout time, so the STALE checks (evidence
-      # predates last commit; evidence older than 7 days) are inert here.
-      # CI strict therefore enforces "committed evidence exists + says PASS";
-      # evidence CURRENCY is owned by each repo's own factory-gate workflow,
-      # which re-runs the real gate on every push to that repo.
-      - name: Strict constellation gate (UNVERIFIED/FAILING evidence fails)
+      # every file's mtime to checkout time, so the mtime STALE checks are
+      # inert here. But the gate records VERIFICATION.git_head (the commit it
+      # ran against), and strict compares it to the repo's current code HEAD
+      # — a mismatch IS staleness and IS detected from a fresh checkout. The
+      # age window (evidence older than N days) remains a local-run property;
+      # the scheduled strict-gate.yml workflow re-derives this same gate
+      # daily so drift fails loudly even without a push.
+      - name: Strict constellation gate (UNVERIFIED/FAILING/STALE-by-hash fails)
         if: ${{ env.GH_PAT != '' }}
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
