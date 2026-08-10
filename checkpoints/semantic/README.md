@@ -1,10 +1,17 @@
 # Semantic Checkpoints (versioned)
 
-The anti-amnesia record of the Sovereign Verification Ledger. Every
-`status_report.py --strict` run appends one immutable, content-hashed snapshot
-here: timestamp, factory git HEAD, all 7 constellation project states, the
-claims registry, and any non-verified (CONTESTED / REGRESSED / STALE) evidence
-with its commit SHAs.
+The anti-amnesia record of the Sovereign Verification Ledger. Each run appends
+one immutable, content-hashed snapshot here when the semantic state CHANGES:
+timestamp, factory git HEAD, all 7 constellation project states, the claims
+registry, and any non-verified (CONTESTED / REGRESSED / STALE) evidence with
+its commit SHAs.
+
+**Change-gated, not per-run:** a checkpoint is written only when the semantic
+snapshot (project states, tiers, gates, coverage, mutation, claims) differs
+from the latest committed one. Timestamps, git HEAD, and absolute paths are
+volatile and excluded from the comparison, so two runs with identical state
+produce no noise — the store records meaningful transitions, and the tree
+stays clean.
 
 **Why this directory is versioned (not gitignored like `artifacts/`):**
 checkpoints are the durable history that survives context compression —
