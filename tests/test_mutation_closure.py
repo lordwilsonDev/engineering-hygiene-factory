@@ -220,6 +220,7 @@ def test_build_gate_verdict_map(tmp_path) -> None:
                               ("unknown", "UNKNOWN"), ("bogus", "UNKNOWN")]:
         gate = rf.build_gate([_result("fuzzing")], verdict, tmp_path)
         assert gate["release_verdict"] == expected, verdict
+        assert gate["critical_failures_resolved"] == (verdict != "fail")
 
 
 def test_build_gate_evidence_fields(tmp_path) -> None:
@@ -322,6 +323,7 @@ def test_verify_live_auth_http_error_and_unreachable(tmp_path, monkeypatch) -> N
 
 def test_verify_live_auth_secret_from_dotenv(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("MCP_BRIDGE_SECRET", raising=False)
+    monkeypatch.delenv("MSB_BASE_URL", raising=False)
     (tmp_path / ".env").write_text("MCP_BRIDGE_SECRET=from-file\n", encoding="utf-8")
     urls: list[str] = []
     def fake(req, timeout=None):
@@ -614,14 +616,6 @@ def test_build_gate_no_results_exact_unknowns(tmp_path) -> None:
     ]
 
 
-def test_build_gate_verdict_map_exact_release() -> None:
-    for verdict, expected in [("fail", "FAILED"), ("blocked", "BLOCKED"),
-                              ("partial", "BLOCKED"), ("pass", "PASS")]:
-        gate = rf.build_gate([_result("fuzzing")], verdict, project=Path("."))
-        assert gate["release_verdict"] == expected
-        assert gate["critical_failures_resolved"] == (verdict != "fail")
-
-
 # ═════════════════════════════════ CLI mains ═════════════════════════════════
 
 def test_status_main_with_ci_and_stale_days(tmp_path, monkeypatch) -> None:
@@ -692,7 +686,9 @@ def _monkeypatch_gate_inputs(tmp_path, monkeypatch, *, suite_verdict: str,
     """Wire main()'s evidence legs to deterministic fixtures.
 
     A real tests/ dir is created so main() takes the run_pytest branch (it
-    skips pytest entirely when the target doesn't exist)."""
+    skips pytest entirely when the target doesn't exist). Ambient
+    MSB_COVERAGE_FLOOR is cleared so the default floor is 0.0 (hermetic)."""
+    monkeypatch.delenv("MSB_COVERAGE_FLOOR", raising=False)
     (tmp_path / "tests").mkdir(exist_ok=True)
     def fake_run_pytest(project, target="tests/", coverage=None):
         res = {"passed": pytest_passed, "summary": "3 passed" if pytest_passed else "3 failed",
