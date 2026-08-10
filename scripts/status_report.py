@@ -13,7 +13,7 @@ Status derivation (the only truth table):
     gate artifact missing           -> UNVERIFIED  (no evidence at all)
     gate verdict != PASS            -> FAILING     (gate ran and failed)
     hygiene verdict == fail         -> FAILING     (weakest leg failed)
-    evidence older than last commit -> STALE       (code moved past the proof)
+    evidence older than last NON-EVIDENCE commit -> STALE  (code moved past the proof)
     evidence older than window      -> STALE       (nobody's run the gate lately)
     otherwise                       -> VERIFIED    (green AND current)
 
@@ -76,17 +76,30 @@ def read_json(path: Path) -> dict | None:
         return {}
 
 
-def last_commit_time(repo: Path) -> float | None:
-    """Epoch seconds of the repo's last commit; None if not a git repo."""
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(repo), "log", "-1", "--format=%ct"],
-            capture_output=True, text=True, timeout=10, check=False,
-        )
-        if proc.returncode == 0 and proc.stdout.strip():
-            return float(proc.stdout.strip())
-    except (subprocess.SubprocessError, ValueError, OSError):
-        pass
+def last_commit_time(repo: Path,
+                     evidence_rel: str = "artifacts/hygiene") -> float | None:
+    """Epoch seconds of the repo's last NON-EVIDENCE commit; None if not a git
+    repo.
+
+    The evidence directory is excluded from the freshness query so committing
+    gate artifacts never makes the evidence itself look stale — committing
+    proof must not invalidate it (STALE means "code moved past the proof", not
+    "proof was versioned"). If every commit touches only evidence, falls back
+    to the plain last commit so the age window still applies.
+    """
+    queries = [
+        ["git", "-C", str(repo), "log", "-1", "--format=%ct", "--",
+         f":(exclude){evidence_rel}"],
+        ["git", "-C", str(repo), "log", "-1", "--format=%ct"],
+    ]
+    for query in queries:
+        try:
+            proc = subprocess.run(query, capture_output=True, text=True,
+                                  timeout=10, check=False)
+            if proc.returncode == 0 and proc.stdout.strip():
+                return float(proc.stdout.strip())
+        except (subprocess.SubprocessError, ValueError, OSError):
+            pass
     return None
 
 

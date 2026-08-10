@@ -10,10 +10,35 @@ last commit) must map to exactly the state the table promises.
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 from pathlib import Path
 
 import status_report as sr  # noqa: E402  (sys.path via root conftest.py)
+
+
+def _git(repo: Path, *args: str) -> None:
+    """Run a git command inside the test repo, configured for CI machines."""
+    subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        check=True, capture_output=True, timeout=30)
+
+
+def _make_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    return repo
+
+
+def _plant_gate(repo: Path, verdict: str = "PASS") -> Path:
+    d = repo / "artifacts" / "hygiene"
+    d.mkdir(parents=True)
+    gate = d / "factory_gate.json"
+    gate.write_text(json.dumps(_gate(verdict)), encoding="utf-8")
+    (d / "hygiene_aggregate.json").write_text(
+        json.dumps({"factory_verdict": "pass"}), encoding="utf-8")
+    return gate
 
 
 def _gate(verdict: str = "PASS", coverage: dict | None = None) -> dict:
@@ -206,6 +231,69 @@ def test_status_json_written_by_cli(tmp_path, monkeypatch):
     payload = json.loads((tmp_path / "artifacts" / "status" / "status.json").read_text())
     assert payload["verdict"] in ("UNVERIFIED", "VERIFIED")
     assert payload["projects"] == []
+
+
+def test_last_commit_time_excludes_evidence_commits(tmp_path):
+    """Committing gate evidence must not advance the freshness clock — STALE
+    means "code moved past the proof", not "proof was versioned" (the
+    circularity that made committed evidence eternally STALE)."""
+    repo = _make_repo(tmp_path)
+    (repo / "app.py").write_text("x = 1\n", encoding="utf-8")
+    _git(repo, "add", "app.py")
+    _git(repo, "commit", "-q", "-m", "code")
+    code_ts = sr.last_commit_time(repo)
+
+    gate = _plant_gate(repo)
+    _git(repo, "add", "artifacts")
+    _git(repo, "commit", "-q", "-m", "evidence")
+
+    # The evidence-only commit must NOT move the freshness clock.
+    assert sr.last_commit_time(repo) == code_ts
+
+
+def test_evidence_commit_keeps_repo_verified(tmp_path, monkeypatch):
+    """End-to-end: code commit -> gate runs -> evidence committed must stay
+    VERIFIED (the exact flow that used to flip everything STALE)."""
+    repo = _make_repo(tmp_path)
+    (repo / "app.py").write_text("x = 1\n", encoding="utf-8")
+    _git(repo, "add", "app.py")
+    _git(repo, "commit", "-q", "-m", "code")
+    _plant_gate(repo)
+    _git(repo, "add", "artifacts")
+    _git(repo, "commit", "-q", "-m", "evidence")
+
+    old = sr.PROJECTS
+    sr.PROJECTS = [{"name": "p", "repo": str(repo), "slug": "x/p"}]
+    try:
+        status = sr.build_status(with_ci=False)
+        assert status["projects"][0]["state"] == "VERIFIED"
+        assert status["projects"][0]["stale_after_last_commit"] is False
+    finally:
+        sr.PROJECTS = old
+
+
+def test_code_commit_after_gate_is_stale(tmp_path, monkeypatch):
+    """The flip side: a REAL code commit after the gate still reads STALE."""
+    repo = _make_repo(tmp_path)
+    (repo / "app.py").write_text("x = 1\n", encoding="utf-8")
+    _git(repo, "add", "app.py")
+    _git(repo, "commit", "-q", "-m", "code")
+    gate = _plant_gate(repo)
+    _git(repo, "add", "artifacts")
+    _git(repo, "commit", "-q", "-m", "evidence")
+
+    # Real code moves after the proof: touch app.py and commit again.
+    time.sleep(1.1)  # ensure the code commit lands after the gate mtime
+    (repo / "app.py").write_text("x = 2\n", encoding="utf-8")
+    _git(repo, "add", "app.py")
+    _git(repo, "commit", "-q", "-m", "more code")
+
+    state, reasons = sr.derive_state(
+        _gate(), {"factory_verdict": "pass"},
+        sr.last_commit_time(repo), gate.stat().st_mtime,
+        sr.DEFAULT_STALE_DAYS * 86400)
+    assert state == "STALE"
+    assert "predates last commit" in reasons[0]
 
 
 def test_check_ignores_unverified_but_strict_does_not(tmp_path, monkeypatch):
