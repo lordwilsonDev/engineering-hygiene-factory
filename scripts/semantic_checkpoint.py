@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,7 +26,10 @@ ROOT = Path(__file__).resolve().parents[1]
 # they live OUTSIDE the gitignored artifacts/ tree so every snapshot is
 # committed as evidence. artifacts/ is CI-regenerated scratch; checkpoints/ is
 # durable ledger history.
-CHECKPOINTS_DIR = ROOT / "checkpoints" / "semantic"
+#
+# SEMANTIC_CHECKPOINT_DIR overrides the store (tests point it at a temp dir so
+# the versioned history is never polluted by test runs).
+CHECKPOINTS_DIR = Path(os.environ.get("SEMANTIC_CHECKPOINT_DIR") or (ROOT / "checkpoints" / "semantic"))
 STATUS_JSON = ROOT / "artifacts" / "status" / "status.json"
 CLAIMS_JSON = ROOT / "artifacts" / "status" / "claims.json"
 

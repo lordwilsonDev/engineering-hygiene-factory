@@ -29,3 +29,10 @@ def test_semantic_checkpoint_creates_distinct_files() -> None:
 
     new_count = len(list(CHECKPOINTS_DIR.glob("*.json")))
     assert new_count >= initial_count + 2
+
+    # The checkpoint store is VERSIONED history — the test must not pollute
+    # it (or dirty the tree) with test-generated snapshots. Remove what we
+    # created so the store only ever holds real ledger runs.
+    for p in (f1, f2):
+        if p.exists():
+            p.unlink()
