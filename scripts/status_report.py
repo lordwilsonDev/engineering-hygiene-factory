@@ -309,7 +309,7 @@ def mutation_score(repo: Path) -> float | None:
     evidence at all.
     """
     snap = read_json(repo / "artifacts" / "hygiene" / "mutation_score.json")
-    score = snap.get("score_pct") if snap else None
+    score = (snap.get("score_pct") or snap.get("overall_score") or snap.get("score")) if snap else None
     return score if isinstance(score, (int, float)) else None
 
 
@@ -601,6 +601,13 @@ def main(argv: list[str] | None = None) -> int:
     print(f"status.json -> {out_dir / 'status.json'}")
     print(f"STATUS.md   -> {ROOT / 'STATUS.md'}")
     print(f"claims.json -> {out_dir / 'claims.json'}")
+    
+    try:
+        from semantic_checkpoint import create_checkpoint
+        create_checkpoint()
+    except Exception as exc:
+        print(f"semantic checkpoint failed: {exc}", file=sys.stderr)
+
     for p in status["projects"]:
         print(f"  {p['project']:28s} {p['state']:10s} {p.get('verification_tier') or '-':14s} "
               f"gate={p['gate'] or '-':4s} hygiene={p['hygiene'] or '-':8s} "
