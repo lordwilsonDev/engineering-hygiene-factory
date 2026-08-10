@@ -143,16 +143,19 @@ def read_json(path: Path) -> dict | None:
 
 
 def last_commit_time(repo: Path,
-                     evidence_rel: str = "artifacts/hygiene") -> float | None:
+                     evidence_rel: str = "artifacts") -> float | None:
     """Epoch seconds of the repo's last NON-EVIDENCE commit; None if not a git
     repo or every commit touches only evidence.
 
-    The evidence directory is excluded (via the `:(exclude)` magic pathspec,
-    git >= 2.13) so committing gate artifacts never makes the evidence itself
-    look stale — committing proof must not invalidate it. STALE means "code
-    moved past the proof", not "proof was versioned". The age-window check
-    uses the artifact mtime directly, so a repo with no code commits needs no
-    fallback here: no code commit -> no "code moved past the proof" signal.
+    The whole artifacts/ tree is excluded (via the `:(exclude)` magic
+    pathspec, git >= 2.13) so committing evidence — gate artifacts under
+    artifacts/hygiene/, claim containers under artifacts/business/, mutation
+    snapshots, whatever a producer emits — never makes the evidence itself
+    look stale. Committing proof must not invalidate it, in ANY evidence
+    subdir. STALE means "code moved past the proof", not "proof was
+    versioned". The age-window check uses the artifact mtime directly, so a
+    repo with no code commits needs no fallback here: no code commit -> no
+    "code moved past the proof" signal.
     """
     try:
         proc = subprocess.run(
@@ -168,14 +171,16 @@ def last_commit_time(repo: Path,
 
 
 def code_head(repo: Path,
-              evidence_rel: str = "artifacts/hygiene") -> str | None:
+              evidence_rel: str = "artifacts") -> str | None:
     """Full hash of the repo's last NON-EVIDENCE commit; None if not git.
 
-    Mirrors last_commit_time's pathspec. This is the hash-based freshness
-    check that WORKS from a fresh CI checkout: factory_gate.json records
-    VERIFICATION.git_head (the commit the gate ran against), and status
-    compares it to code_head(repo) — a mismatch means code moved past the
-    proof even when file mtimes are all checkout-time.
+    Mirrors last_commit_time's pathspec (the whole artifacts/ tree, so
+    evidence commits in any subdir — hygiene, business, status — never move
+    the code HEAD). This is the hash-based freshness check that WORKS from a
+    fresh CI checkout: factory_gate.json records VERIFICATION.git_head (the
+    commit the gate ran against), and status compares it to code_head(repo)
+    — a mismatch means code moved past the proof even when file mtimes are
+    all checkout-time.
     """
     try:
         proc = subprocess.run(
