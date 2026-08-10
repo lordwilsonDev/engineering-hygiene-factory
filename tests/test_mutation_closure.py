@@ -490,10 +490,10 @@ def test_ci_conclusion_parses(monkeypatch) -> None:
     monkeypatch.setattr(sr.shutil, "which", lambda _: "/usr/local/bin/gh")
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(
         [], 0, stdout='[{"conclusion": "success"}]', stderr=""))
-    assert sr.ci_conclusion("x/y") == "success"
+    assert sr.ci_conclusion("x/y", "factory-gate") == "success"
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(
         [], 0, stdout="[]", stderr=""))
-    assert sr.ci_conclusion("x/y") is None
+    assert sr.ci_conclusion("x/y", "factory-gate") is None
 
 
 def test_derive_state_age_boundary(tmp_path) -> None:
@@ -588,7 +588,7 @@ def test_build_status_with_ci_column(tmp_path, monkeypatch) -> None:
     old = sr.PROJECTS
     sr.PROJECTS = [{"name": "msb-v3", "repo": str(tmp_path / "msb-v3"), "slug": "x/msb"}]
     try:
-        monkeypatch.setattr(sr, "ci_conclusion", lambda slug: "success" if slug == "x/msb" else None)
+        monkeypatch.setattr(sr, "ci_conclusion", lambda slug, workflow="factory-gate": "success" if slug == "x/msb" else None)
         status = sr.build_status(with_ci=True)
         entry = status["projects"][0]
         assert entry["ci"] == "success"

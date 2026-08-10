@@ -598,6 +598,118 @@ def test_latest_failed_artifact_finds_post_gate_failure(tmp_path):
     assert sr.latest_failed_artifact(d, gate_ts) == "d04_routing_accuracy_20260810T120000Z.json"
 
 
+def test_ci_conclusion_uses_project_workflow(monkeypatch):
+    """The ledger must SEE CI on every node: the per-project `workflow` field
+    tells --with-ci which workflow carries the gate conclusion. The two
+    ~/.hermes trees run their own workflows (routing-gate.yml, smoke.yml),
+    not factory-gate.yml — without this the ledger read ci=- on them and
+    could never REGRESS-detect them (the 2026-08-10 blind-spot fix)."""
+    seen: list[str] = []
+
+    def _fake(slug: str, workflow: str) -> str | None:
+        seen.append(workflow)
+        return "success" if workflow in ("routing-gate", "smoke", "factory-gate") else None
+
+    monkeypatch.setattr(sr, "_ci_conclusion_for_workflow", _fake)
+    assert sr.ci_conclusion("x/dr", "routing-gate") == "success"
+    assert sr.ci_conclusion("x/so", "smoke") == "success"
+    # The five constellation repos still use factory-gate (default).
+    assert sr.ci_conclusion("x/msb") == "success"
+    assert seen == ["routing-gate", "smoke", "factory-gate"]
+
+
+def test_ci_conclusion_falls_back_to_factory_gate(monkeypatch):
+    """A project whose own workflow has no runs yet must fall back to
+    factory-gate before reading None — a workflow rename can never silently
+    make the ledger blind to existing CI evidence."""
+    seen: list[str] = []
+
+    def _fake(slug: str, workflow: str) -> str | None:
+        seen.append(workflow)
+        if workflow == "routing-gate":
+            return None  # project workflow: no runs recorded yet
+        if workflow == "factory-gate":
+            return "failure"  # historical factory-gate CI exists
+        return None
+
+    monkeypatch.setattr(sr, "_ci_conclusion_for_workflow", _fake)
+    assert sr.ci_conclusion("x/dr", "routing-gate") == "failure"
+    assert seen == ["routing-gate", "factory-gate"]
+
+
+def test_ci_conclusion_skips_in_progress_runs(monkeypatch):
+    """Only COMPLETED runs carry a verdict: a push that just triggered CI
+    must not read as no-CI while the previous completed run (the evidence
+    behind the current status) still holds — the 2026-08-10 in-progress
+    blindness fix. The query filters --status completed; an in-progress run
+    (empty conclusion) must never be returned as a verdict."""
+    calls: list[str] = []
+
+    def _fake_gh(argv: list[str], **kwargs) -> subprocess.CompletedProcess:
+        calls.append(argv)
+        status_flag = argv[argv.index("--status") + 1]
+        assert status_flag == "completed"  # the fix: only concluded runs count
+        return subprocess.CompletedProcess(argv, 0, json.dumps([
+            {"conclusion": "success"}]), "")
+
+    monkeypatch.setattr(sr, "shutil", type("S", (), {
+        "which": staticmethod(lambda _: "/usr/bin/gh")})())
+    monkeypatch.setattr(sr, "subprocess", type("SP", (), {
+        "run": staticmethod(_fake_gh), "SubprocessError": subprocess.SubprocessError})())
+    assert sr.ci_conclusion("x/msb") == "success"
+    assert any("--status" in c and "completed" in c for c in calls)
+
+
+def test_ci_conclusion_empty_conclusion_is_none(monkeypatch):
+    """A completed row with an empty/missing conclusion field is not a
+    verdict — fail closed to None, never "" (which rendered as a bare '-' in
+    the table and could not REGRESS-detect)."""
+    monkeypatch.setattr(sr, "shutil", type("S", (), {
+        "which": staticmethod(lambda _: "/usr/bin/gh")})())
+    monkeypatch.setattr(sr, "subprocess", type("SP", (), {
+        "run": staticmethod(lambda argv, **kwargs: subprocess.CompletedProcess(
+            argv, 0, json.dumps([{"conclusion": ""}]), "")),
+        "SubprocessError": subprocess.SubprocessError})())
+    assert sr.ci_conclusion("x/msb") is None
+
+
+def test_ci_conclusion_none_only_when_no_run_anywhere(monkeypatch):
+    """None is reserved for genuinely-no-CI: gh absent, query failure, or no
+    run under either workflow — never for a workflow-name mismatch."""
+    monkeypatch.setattr(sr, "_ci_conclusion_for_workflow", lambda slug, wf: None)
+    assert sr.ci_conclusion("x/dr", "routing-gate") is None
+    monkeypatch.setattr(sr, "shutil", type("S", (), {"which": lambda _: None})())
+    assert sr.ci_conclusion("x/msb") is None
+
+
+def test_build_status_threads_project_workflow(tmp_path, monkeypatch):
+    """build_status passes the per-project workflow into ci_conclusion — the
+    end-to-end wiring that makes ci=success visible for the two internal
+    repos on the constellation table."""
+    got: list[str] = []
+
+    def _fake(slug: str, workflow: str) -> str:
+        got.append(f"{slug}:{workflow}")
+        return "success"
+
+    monkeypatch.setattr(sr, "ci_conclusion", _fake)
+    proj = tmp_path / "p"
+    (proj / "artifacts" / "hygiene").mkdir(parents=True)
+    (proj / "artifacts" / "hygiene" / "factory_gate.json").write_text(
+        json.dumps(_gate()), encoding="utf-8")
+    (proj / "artifacts" / "hygiene" / "hygiene_aggregate.json").write_text(
+        json.dumps(_agg()), encoding="utf-8")
+    old = sr.PROJECTS
+    sr.PROJECTS = [{"name": "domain-router", "repo": str(proj),
+                    "slug": "x/dr", "workflow": "routing-gate"}]
+    try:
+        status = sr.build_status(with_ci=True)
+        assert status["projects"][0]["ci"] == "success"
+        assert got == ["x/dr:routing-gate"]
+    finally:
+        sr.PROJECTS = old
+
+
 def test_derive_state_ci_failure_is_regressed():
     """Blueprint §22 half 1: historical green (PASS evidence) + current red
     (repo's own CI failed) is REGRESSED — the code reality moved, the proof
@@ -693,7 +805,7 @@ def test_derive_claims_records_contradictions(tmp_path, monkeypatch):
     old = sr.PROJECTS
     sr.PROJECTS = [{"name": "nexus", "repo": str(repo), "slug": "x/nx"}]
     try:
-        monkeypatch.setattr(sr, "ci_conclusion", lambda slug: "failure")
+        monkeypatch.setattr(sr, "ci_conclusion", lambda slug, workflow="factory-gate": "failure")
         status = sr.build_status(with_ci=True)
         assert status["projects"][0]["state"] == "REGRESSED"
         claim = sr.derive_claims(status)["claims"][0]

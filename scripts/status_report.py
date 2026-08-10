@@ -80,8 +80,13 @@ PROJECTS: list[dict[str, str]] = [
     # ~/.hermes locally but are checked out as bare names in CI. `local` holds
     # the home-relative subpath; repo_path resolves it under ~ when
     # MSB_STATUS_HOME is unset and under the checkout workspace when it's set.
-    {"name": "domain-router", "repo": "domain-router", "local": ".hermes/domain-router", "slug": "lordwilsonDev/domain-router"},
-    {"name": "skill-orchestration-os", "repo": "skill-orchestration-os", "local": ".hermes/skills/skill-orchestration-os", "slug": "lordwilsonDev/skill-orchestration-os"},
+    # The ~/.hermes trees run their own gates under different workflow names:
+    # domain-router's routing-gate.yml and skill-os's smoke.yml. `workflow`
+    # tells --with-ci which GitHub workflow carries the gate conclusion per
+    # project (default factory-gate) — without it the ledger is blind to CI
+    # on these two nodes (ci=-, REGRESSED underivable there).
+    {"name": "domain-router", "repo": "domain-router", "local": ".hermes/domain-router", "slug": "lordwilsonDev/domain-router", "workflow": "routing-gate"},
+    {"name": "skill-orchestration-os", "repo": "skill-orchestration-os", "local": ".hermes/skills/skill-orchestration-os", "slug": "lordwilsonDev/skill-orchestration-os", "workflow": "smoke"},
 ]
 
 def repo_root() -> Path:
@@ -204,26 +209,53 @@ def recorded_head(gate: dict | None) -> str | None:
     return head if isinstance(head, str) and head else None
 
 
-def ci_conclusion(slug: str) -> str | None:
-    """Last factory-gate CI conclusion for a repo slug (best-effort).
+def _ci_conclusion_for_workflow(slug: str, workflow: str) -> str | None:
+    """Last COMPLETED CI conclusion for a repo slug + workflow name
+    (best-effort).
 
-    Uses `gh`, which honours GH_TOKEN/GH_PAT for cross-repo reads. None when
-    gh is unavailable, the query fails, or no factory-gate run exists yet.
+    Only a concluded run carries a verdict: an in-progress run reports an
+    empty conclusion, so a push that just triggered CI must not read as "no
+    CI" while the previous completed run (the evidence behind the current
+    status) still says success/failure. `--status completed` makes the query
+    land on the last concluded verdict.
     """
     if not shutil.which("gh"):
         return None
     try:
         proc = subprocess.run(
-            ["gh", "run", "list", "--repo", slug, "--workflow", "factory-gate",
-             "--limit", "1", "--json", "conclusion"],
+            ["gh", "run", "list", "--repo", slug, "--workflow", workflow,
+             "--status", "completed", "--limit", "1", "--json", "conclusion"],
             capture_output=True, text=True, timeout=20, check=False,
         )
         if proc.returncode != 0:
             return None
         rows = json.loads(proc.stdout or "[]")
-        return rows[0]["conclusion"] if rows else None
+        if not rows:
+            return None
+        conclusion = rows[0].get("conclusion")
+        return conclusion if isinstance(conclusion, str) and conclusion else None
     except (subprocess.SubprocessError, json.JSONDecodeError, KeyError, IndexError):
         return None
+
+
+def ci_conclusion(slug: str, workflow: str = "factory-gate") -> str | None:
+    """Last CI conclusion for a repo slug (best-effort).
+
+    Queries the project's OWN gate workflow (per-PROJECTS `workflow` field;
+    default factory-gate) — the five constellation repos run factory-gate.yml,
+    domain-router runs routing-gate.yml, skill-orchestration-os runs smoke.yml.
+    Falls back to the factory-gate workflow when the project's workflow query
+    returns nothing, so a workflow rename or a project that hasn't run its
+    own gate yet can never silently read "no CI" for a repo that has
+    factory-gate runs. None only when gh is unavailable, the query fails, or
+    no run exists under either workflow.
+    """
+    if workflow != "factory-gate":
+        conclusion = _ci_conclusion_for_workflow(slug, workflow)
+        if conclusion is not None:
+            return conclusion
+        return _ci_conclusion_for_workflow(slug, "factory-gate")
+    return _ci_conclusion_for_workflow(slug, "factory-gate")
 
 
 def artifact_mtime(path: Path) -> float:
@@ -503,7 +535,7 @@ def build_status(with_ci: bool = False, stale_seconds: int = DEFAULT_STALE_DAYS 
         formal = formal_verification(repo)
         hygiene_verdict = (aggregate or {}).get("factory_verdict")
         live_auth_verified = gate_live_auth(gate)
-        ci = ci_conclusion(cfg["slug"]) if with_ci else None
+        ci = ci_conclusion(cfg["slug"], cfg.get("workflow", "factory-gate")) if with_ci else None
         contradiction = (latest_failed_artifact(evidence, artifact_mtime(gate_path))
                          if gate_path.exists() else None)
         state, reasons = derive_state(
