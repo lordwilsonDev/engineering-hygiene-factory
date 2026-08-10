@@ -1,0 +1,247 @@
+{
+  "timestamp": "2026-08-10T13:17:21.650271+00:00",
+  "factory_git_head": "04dab14158479c4f98c305a2bf659e080ec8d4b5",
+  "projects_count": 7,
+  "projects": [
+    {
+      "project": "msb-v3",
+      "repo": "/Users/lordwilson/msb-v3",
+      "state": "VERIFIED",
+      "verification_tier": "T5 ADVERSARIAL",
+      "gate": "PASS",
+      "hygiene": "pass",
+      "mutation_score_pct": 70.8,
+      "coverage_pct": 70.0,
+      "coverage_floor_pct": 65.0,
+      "pytest_passed": true,
+      "pytest_summary": "282 passed, 2 warnings in 18.18s",
+      "live_auth_verified": true,
+      "unresolved_unknowns": 0,
+      "evidence_age_h": 0.1,
+      "stale_after_last_commit": false,
+      "ci": "success",
+      "reasons": [
+        "gate PASS, artifact age 0h"
+      ]
+    },
+    {
+      "project": "agent-reach",
+      "repo": "/Users/lordwilson/agent-reach",
+      "state": "VERIFIED",
+      "verification_tier": "T5 ADVERSARIAL",
+      "gate": "PASS",
+      "hygiene": "pass",
+      "mutation_score_pct": 67.5,
+      "coverage_pct": 84.0,
+      "coverage_floor_pct": 75.0,
+      "pytest_passed": true,
+      "pytest_summary": "599 passed in 14.56s",
+      "live_auth_verified": null,
+      "unresolved_unknowns": 0,
+      "evidence_age_h": 6.1,
+      "stale_after_last_commit": false,
+      "ci": "success",
+      "reasons": [
+        "gate PASS, artifact age 6h"
+      ]
+    },
+    {
+      "project": "sovereign-mcp-os",
+      "repo": "/Users/lordwilson/sovereign-mcp-os",
+      "state": "VERIFIED",
+      "verification_tier": "T4 INTEGRATED",
+      "gate": "PASS",
+      "hygiene": "pass",
+      "mutation_score_pct": null,
+      "coverage_pct": 94.0,
+      "coverage_floor_pct": 90.0,
+      "pytest_passed": true,
+      "pytest_summary": "22 passed in 0.63s",
+      "live_auth_verified": true,
+      "unresolved_unknowns": 0,
+      "evidence_age_h": 0.1,
+      "stale_after_last_commit": false,
+      "ci": "success",
+      "reasons": [
+        "gate PASS, artifact age 0h"
+      ]
+    },
+    {
+      "project": "sovereign-outcome-engine",
+      "repo": "/Users/lordwilson/sovereign-outcome-engine",
+      "state": "VERIFIED",
+      "verification_tier": "T4 INTEGRATED",
+      "gate": "PASS",
+      "hygiene": "pass",
+      "mutation_score_pct": null,
+      "coverage_pct": 77.0,
+      "coverage_floor_pct": 70.0,
+      "pytest_passed": true,
+      "pytest_summary": "64 passed in 0.98s",
+      "live_auth_verified": null,
+      "unresolved_unknowns": 0,
+      "evidence_age_h": 0.1,
+      "stale_after_last_commit": false,
+      "ci": "success",
+      "reasons": [
+        "gate PASS, artifact age 0h"
+      ]
+    },
+    {
+      "project": "nexus",
+      "repo": "/Users/lordwilson/nexus",
+      "state": "VERIFIED",
+      "verification_tier": "T4 INTEGRATED",
+      "gate": "PASS",
+      "hygiene": "pass",
+      "mutation_score_pct": null,
+      "coverage_pct": 61.0,
+      "coverage_floor_pct": 60.0,
+      "pytest_passed": true,
+      "pytest_summary": "44 passed, 2 warnings in 2.70s",
+      "live_auth_verified": null,
+      "unresolved_unknowns": 0,
+      "evidence_age_h": 5.2,
+      "stale_after_last_commit": false,
+      "ci": "success",
+      "reasons": [
+        "gate PASS, artifact age 5h"
+      ]
+    },
+    {
+      "project": "domain-router",
+      "repo": "/Users/lordwilson/.hermes/domain-router",
+      "state": "VERIFIED",
+      "verification_tier": "T4 INTEGRATED",
+      "gate": "PASS",
+      "hygiene": "pass",
+      "mutation_score_pct": null,
+      "coverage_pct": null,
+      "coverage_floor_pct": null,
+      "pytest_passed": true,
+      "pytest_summary": "23 passed in 0.14s",
+      "live_auth_verified": null,
+      "unresolved_unknowns": 0,
+      "evidence_age_h": 5.1,
+      "stale_after_last_commit": false,
+      "ci": null,
+      "reasons": [
+        "gate PASS, artifact age 5h"
+      ]
+    },
+    {
+      "project": "skill-orchestration-os",
+      "repo": "/Users/lordwilson/.hermes/skills/skill-orchestration-os",
+      "state": "VERIFIED",
+      "verification_tier": "T4 INTEGRATED",
+      "gate": "PASS",
+      "hygiene": "pass",
+      "mutation_score_pct": null,
+      "coverage_pct": null,
+      "coverage_floor_pct": null,
+      "pytest_passed": true,
+      "pytest_summary": "16 passed, 2 warnings in 0.52s",
+      "live_auth_verified": null,
+      "unresolved_unknowns": 0,
+      "evidence_age_h": 5.1,
+      "stale_after_last_commit": false,
+      "ci": null,
+      "reasons": [
+        "gate PASS, artifact age 5h"
+      ]
+    }
+  ],
+  "claims": {
+    "ledger": "sovereign-verification",
+    "generated_at": "2026-08-10T13:11:28.874941+00:00",
+    "verdict": "VERIFIED",
+    "claims": [
+      {
+        "claim_id": "claim:msb-v3:verified",
+        "subject": "msb-v3",
+        "claim_type": "constellation_node_verified",
+        "verification_tier": "T5 ADVERSARIAL",
+        "verdict": "VERIFIED",
+        "evidence": [
+          "/Users/lordwilson/msb-v3/artifacts/hygiene/factory_gate.json"
+        ],
+        "evaluated_at": "2026-08-10T13:11:28.874941+00:00",
+        "contradicted_by": []
+      },
+      {
+        "claim_id": "claim:agent-reach:verified",
+        "subject": "agent-reach",
+        "claim_type": "constellation_node_verified",
+        "verification_tier": "T5 ADVERSARIAL",
+        "verdict": "VERIFIED",
+        "evidence": [
+          "/Users/lordwilson/agent-reach/artifacts/hygiene/factory_gate.json"
+        ],
+        "evaluated_at": "2026-08-10T13:11:28.874941+00:00",
+        "contradicted_by": []
+      },
+      {
+        "claim_id": "claim:sovereign-mcp-os:verified",
+        "subject": "sovereign-mcp-os",
+        "claim_type": "constellation_node_verified",
+        "verification_tier": "T4 INTEGRATED",
+        "verdict": "VERIFIED",
+        "evidence": [
+          "/Users/lordwilson/sovereign-mcp-os/artifacts/hygiene/factory_gate.json"
+        ],
+        "evaluated_at": "2026-08-10T13:11:28.874941+00:00",
+        "contradicted_by": []
+      },
+      {
+        "claim_id": "claim:sovereign-outcome-engine:verified",
+        "subject": "sovereign-outcome-engine",
+        "claim_type": "constellation_node_verified",
+        "verification_tier": "T4 INTEGRATED",
+        "verdict": "VERIFIED",
+        "evidence": [
+          "/Users/lordwilson/sovereign-outcome-engine/artifacts/hygiene/factory_gate.json"
+        ],
+        "evaluated_at": "2026-08-10T13:11:28.874941+00:00",
+        "contradicted_by": []
+      },
+      {
+        "claim_id": "claim:nexus:verified",
+        "subject": "nexus",
+        "claim_type": "constellation_node_verified",
+        "verification_tier": "T4 INTEGRATED",
+        "verdict": "VERIFIED",
+        "evidence": [
+          "/Users/lordwilson/nexus/artifacts/hygiene/factory_gate.json"
+        ],
+        "evaluated_at": "2026-08-10T13:11:28.874941+00:00",
+        "contradicted_by": []
+      },
+      {
+        "claim_id": "claim:domain-router:verified",
+        "subject": "domain-router",
+        "claim_type": "constellation_node_verified",
+        "verification_tier": "T4 INTEGRATED",
+        "verdict": "VERIFIED",
+        "evidence": [
+          "/Users/lordwilson/.hermes/domain-router/artifacts/hygiene/factory_gate.json"
+        ],
+        "evaluated_at": "2026-08-10T13:11:28.874941+00:00",
+        "contradicted_by": []
+      },
+      {
+        "claim_id": "claim:skill-orchestration-os:verified",
+        "subject": "skill-orchestration-os",
+        "claim_type": "constellation_node_verified",
+        "verification_tier": "T4 INTEGRATED",
+        "verdict": "VERIFIED",
+        "evidence": [
+          "/Users/lordwilson/.hermes/skills/skill-orchestration-os/artifacts/hygiene/factory_gate.json"
+        ],
+        "evaluated_at": "2026-08-10T13:11:28.874941+00:00",
+        "contradicted_by": []
+      }
+    ]
+  },
+  "non_verified_evidence": {},
+  "content_hash": "20ffdf85e57e8a74e2adf254d1604b6b76258915781162a4602aba964eeae745"
+}
