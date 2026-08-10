@@ -1,23 +1,23 @@
 # Constellation Status (derived from evidence)
 
-Generated: `2026-08-10T12:52:58.492687+00:00` by `scripts/status_report.py`
+Generated: `2026-08-10T12:59:27.579480+00:00` by `scripts/status_report.py`
 
 **Nothing here is asserted — every state is derived from each project's `artifacts/hygiene/` gate artifacts and freshness vs its last git commit.** Missing or stale evidence shows as UNVERIFIED/STALE; fresh PASS with a red repo CI shows as REGRESSED; a recorded post-gate failure shows as CONTESTED (contradictions are preserved, never silently discarded).
 
-Aggregate verdict: **STALE**
+Aggregate verdict: **VERIFIED**
 
 | Project | Tier | State | Gate | Hygiene | Mutation | Cov | pytest | Evidence age | CI (last run) |
 |---|---|---|---|---|---|---|---|---|---|
-| msb-v3 | T4 INTEGRATED | **STALE** | PASS | pass | - | 70.0%/65% | False | 0.2h | success |
-| agent-reach | T5 ADVERSARIAL | **VERIFIED** | PASS | pass | 67.5% | 84.0%/75% | True | 5.8h | success |
-| sovereign-mcp-os | T4 INTEGRATED | **VERIFIED** | PASS | pass | - | 94.0%/85% | True | 5.9h | success |
-| sovereign-outcome-engine | T4 INTEGRATED | **VERIFIED** | PASS | pass | - | 77.0%/65% | True | 4.9h | success |
-| nexus | T4 INTEGRATED | **VERIFIED** | PASS | pass | - | 61.0%/60% | True | 4.9h | success |
-| domain-router | T4 INTEGRATED | **VERIFIED** | PASS | pass | - | - | True | 4.8h | - |
-| skill-orchestration-os | T4 INTEGRATED | **VERIFIED** | PASS | pass | - | - | True | 4.8h | - |
+| msb-v3 | T4 INTEGRATED | **VERIFIED** | PASS | pass | - | 70.0%/65% | True | 0.0h | - |
+| agent-reach | T5 ADVERSARIAL | **VERIFIED** | PASS | pass | 67.5% | 84.0%/75% | True | 5.9h | - |
+| sovereign-mcp-os | T4 INTEGRATED | **VERIFIED** | PASS | pass | - | 94.0%/85% | True | 6.0h | - |
+| sovereign-outcome-engine | T4 INTEGRATED | **VERIFIED** | PASS | pass | - | 77.0%/65% | True | 5.0h | - |
+| nexus | T4 INTEGRATED | **VERIFIED** | PASS | pass | - | 61.0%/60% | True | 5.0h | - |
+| domain-router | T4 INTEGRATED | **VERIFIED** | PASS | pass | - | - | True | 4.9h | - |
+| skill-orchestration-os | T4 INTEGRATED | **VERIFIED** | PASS | pass | - | - | True | 4.9h | - |
 
 ## pytest summaries
-- `msb-v3`: 1 failed, 260 passed, 3 warnings in 50.15s (1 unresolved unknowns)
+- `msb-v3`: 282 passed, 2 warnings in 22.23s
 - `agent-reach`: 599 passed in 14.56s
 - `sovereign-mcp-os`: 22 passed in 0.56s
 - `sovereign-outcome-engine`: 64 passed in 1.02s
@@ -26,7 +26,7 @@ Aggregate verdict: **STALE**
 - `skill-orchestration-os`: 16 passed, 2 warnings in 0.52s
 
 ## Why
-- `msb-v3`: gate recorded commit 4ea87f28, code HEAD is 2e7cfd20 (code moved past the proof)
+- `msb-v3`: gate PASS, artifact age 0h
 - `agent-reach`: gate PASS, artifact age 5h
 - `sovereign-mcp-os`: gate PASS, artifact age 5h
 - `sovereign-outcome-engine`: gate PASS, artifact age 4h
