@@ -48,7 +48,76 @@ def get_factory_git_head() -> str:
         return "unknown"
 
 
-def create_checkpoint() -> Path:
+def _semantic_snapshot(status_data: dict, claims_data: object) -> dict:
+    """The parts of a checkpoint that carry semantic meaning.
+
+    Timestamps, factory git HEAD, absolute repo paths, and evidence ages are
+    volatile (they change every run and differ between local and CI) — they
+    are excluded so two runs with the same semantic state hash identically.
+    Change-gating on this snapshot is what keeps the versioned store a record
+    of MEANINGFUL state, not a near-duplicate per run.
+    """
+    projects = status_data.get("projects", {})
+    if isinstance(projects, dict):
+        projects = [
+            {"project": p_name, **p_info}
+            for p_name, p_info in projects.items()
+            if isinstance(p_info, dict)
+        ]
+    stable_projects = []
+    for p_info in projects if isinstance(projects, list) else []:
+        if not isinstance(p_info, dict):
+            continue
+        p_name = p_info.get("project") or p_info.get("name")
+        if not p_name:
+            continue
+        stable_projects.append({
+            "project": p_name,
+            "state": p_info.get("state") or p_info.get("verification_state"),
+            "verification_tier": p_info.get("verification_tier"),
+            "gate": p_info.get("gate"),
+            "hygiene": p_info.get("hygiene"),
+            "mutation_score_pct": p_info.get("mutation_score_pct"),
+            "coverage_pct": p_info.get("coverage_pct"),
+            "ci": p_info.get("ci"),
+        })
+    stable_projects.sort(key=lambda p: p["project"])
+
+    # Normalize claims: strip the volatile evaluated_at/generated_at timestamps
+    # (they change every run) and keep only the stable semantic fields, so the
+    # snapshot is comparable across runs and environments.
+    stable_claims = []
+    raw_claims = claims_data.get("claims") if isinstance(claims_data, dict) else claims_data
+    for c in raw_claims if isinstance(raw_claims, list) else []:
+        if not isinstance(c, dict):
+            continue
+        stable_claims.append({k: c.get(k) for k in (
+            "claim_id", "subject", "claim_type", "verification_tier", "verdict")})
+    stable_claims.sort(key=lambda c: c.get("claim_id", ""))
+    return {"projects": stable_projects, "claims": stable_claims}
+
+
+def latest_checkpoint_snapshot() -> dict | None:
+    """The stored semantic snapshot of the most recent checkpoint, if any."""
+    if not CHECKPOINTS_DIR.is_dir():
+        return None
+    files = sorted(CHECKPOINTS_DIR.glob("*.json"))
+    if not files:
+        return None
+    try:
+        data = json.loads(files[-1].read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return data.get("semantic_snapshot")
+
+
+def create_checkpoint() -> Path | None:
+    """Write a semantic checkpoint IF the semantic state changed; else skip.
+
+    Returns the checkpoint path when written, or None when the state is
+    unchanged since the last checkpoint (change-gated, so the versioned store
+    records meaningful transitions instead of a near-duplicate per run).
+    """
     CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
     ts_str = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     iso_date = datetime.now(timezone.utc).isoformat()
@@ -67,15 +136,12 @@ def create_checkpoint() -> Path:
         except Exception:
             pass
 
-    projects = status_data.get("projects", {})
-    if isinstance(projects, dict):
-        # status.json stores projects as a list of entries; accept a dict
-        # (name -> info) shape defensively for older/newer producers.
-        projects = [
-            {"project": p_name, **p_info}
-            for p_name, p_info in projects.items()
-            if isinstance(p_info, dict)
-        ]
+    snapshot = _semantic_snapshot(status_data, claims_data)
+    if snapshot == latest_checkpoint_snapshot():
+        print("semantic checkpoint: state unchanged since last checkpoint — skipped")
+        return None
+
+    projects = status_data.get("projects", [])
     non_verified = {}
     for p_info in projects if isinstance(projects, list) else []:
         if not isinstance(p_info, dict):
@@ -94,10 +160,11 @@ def create_checkpoint() -> Path:
     payload = {
         "timestamp": iso_date,
         "factory_git_head": get_factory_git_head(),
-        "projects_count": len(projects),
+        "projects_count": len(projects) if isinstance(projects, list) else len(projects),
         "projects": projects,
         "claims": claims_data,
         "non_verified_evidence": non_verified,
+        "semantic_snapshot": snapshot,
     }
 
     raw_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")

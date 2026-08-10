@@ -1,6 +1,6 @@
 # Constellation Status (derived from evidence)
 
-Generated: `2026-08-10T13:22:34.877814+00:00` by `scripts/status_report.py`
+Generated: `2026-08-10T13:28:45.096017+00:00` by `scripts/status_report.py`
 
 **Nothing here is asserted — every state is derived from each project's `artifacts/hygiene/` gate artifacts and freshness vs its last git commit.** Missing or stale evidence shows as UNVERIFIED/STALE; fresh PASS with a red repo CI shows as REGRESSED; a recorded post-gate failure shows as CONTESTED (contradictions are preserved, never silently discarded).
 
@@ -8,13 +8,13 @@ Aggregate verdict: **VERIFIED**
 
 | Project | Tier | State | Gate | Hygiene | Mutation | Cov | pytest | Evidence age | CI (last run) |
 |---|---|---|---|---|---|---|---|---|---|
-| msb-v3 | T5 ADVERSARIAL | **VERIFIED** | PASS | pass | 70.8% | 70.0%/65% | True | 0.1h | - |
-| agent-reach | T5 ADVERSARIAL | **VERIFIED** | PASS | pass | 67.5% | 84.0%/75% | True | 6.3h | - |
-| sovereign-mcp-os | T4 INTEGRATED | **VERIFIED** | PASS | pass | - | 94.0%/90% | True | 0.3h | - |
-| sovereign-outcome-engine | T4 INTEGRATED | **VERIFIED** | PASS | pass | - | 77.0%/70% | True | 0.3h | - |
-| nexus | T4 INTEGRATED | **VERIFIED** | PASS | pass | - | 61.0%/60% | True | 5.3h | - |
-| domain-router | T4 INTEGRATED | **VERIFIED** | PASS | pass | - | - | True | 5.3h | - |
-| skill-orchestration-os | T4 INTEGRATED | **VERIFIED** | PASS | pass | - | - | True | 5.3h | - |
+| msb-v3 | T5 ADVERSARIAL | **VERIFIED** | PASS | pass | 70.8% | 70.0%/65% | True | 0.2h | - |
+| agent-reach | T5 ADVERSARIAL | **VERIFIED** | PASS | pass | 67.5% | 84.0%/75% | True | 6.4h | - |
+| sovereign-mcp-os | T4 INTEGRATED | **VERIFIED** | PASS | pass | - | 94.0%/90% | True | 0.4h | - |
+| sovereign-outcome-engine | T4 INTEGRATED | **VERIFIED** | PASS | pass | - | 77.0%/70% | True | 0.4h | - |
+| nexus | T4 INTEGRATED | **VERIFIED** | PASS | pass | - | 61.0%/60% | True | 5.4h | - |
+| domain-router | T4 INTEGRATED | **VERIFIED** | PASS | pass | - | - | True | 5.4h | - |
+| skill-orchestration-os | T4 INTEGRATED | **VERIFIED** | PASS | pass | - | - | True | 5.4h | - |
 
 ## pytest summaries
 - `msb-v3`: 282 passed, 2 warnings in 21.56s

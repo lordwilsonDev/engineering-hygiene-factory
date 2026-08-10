@@ -1,38 +1,91 @@
 #!/usr/bin/env python3
-"""Test for semantic checkpointing."""
+"""Tests for semantic checkpointing (change-gated, versioned store)."""
 
 import json
-import time
 from pathlib import Path
-from semantic_checkpoint import create_checkpoint, CHECKPOINTS_DIR
+
+import semantic_checkpoint as sc
 
 
-def test_semantic_checkpoint_creates_distinct_files() -> None:
-    initial_count = len(list(CHECKPOINTS_DIR.glob("*.json"))) if CHECKPOINTS_DIR.exists() else 0
+def test_checkpoint_writes_on_state_change(monkeypatch, tmp_path: Path) -> None:
+    """A changed semantic state produces a new content-hashed checkpoint."""
+    status = tmp_path / "status.json"
+    claims = tmp_path / "claims.json"
+    status.write_text(json.dumps({"projects": [{"project": "a", "state": "VERIFIED"}]}))
+    claims.write_text(json.dumps({"claims": [{"claim_id": "c1"}]}))
+    monkeypatch.setattr(sc, "STATUS_JSON", status)
+    monkeypatch.setattr(sc, "CLAIMS_JSON", claims)
+    monkeypatch.setattr(sc, "CHECKPOINTS_DIR", tmp_path / "store")
 
-    f1 = create_checkpoint()
-    time.sleep(1.0)
-    f2 = create_checkpoint()
+    f1 = sc.create_checkpoint()
+    assert f1 is not None and f1.exists()
 
-    assert f1.exists()
-    assert f2.exists()
-    assert f1 != f2
+    data = json.loads(f1.read_text(encoding="utf-8"))
+    assert "content_hash" in data
+    assert "semantic_snapshot" in data
+    assert data["semantic_snapshot"]["projects"] == [
+        {"project": "a", "state": "VERIFIED",
+         "verification_tier": None, "gate": None, "hygiene": None,
+         "mutation_score_pct": None, "coverage_pct": None, "ci": None}
+    ]
 
-    data1 = json.loads(f1.read_text(encoding="utf-8"))
-    data2 = json.loads(f2.read_text(encoding="utf-8"))
+    # State change -> new checkpoint.
+    status.write_text(json.dumps({"projects": [{"project": "a", "state": "STALE"}]}))
+    f2 = sc.create_checkpoint()
+    assert f2 is not None and f2 != f1
+    assert json.loads(f2.read_text(encoding="utf-8"))["content_hash"] != \
+        json.loads(f1.read_text(encoding="utf-8"))["content_hash"]
 
-    assert "content_hash" in data1
-    assert "content_hash" in data2
-    assert "timestamp" in data1
-    assert "projects" in data1
-    assert data1["content_hash"] != data2["content_hash"]
 
-    new_count = len(list(CHECKPOINTS_DIR.glob("*.json")))
-    assert new_count >= initial_count + 2
+def test_checkpoint_skips_unchanged_state(monkeypatch, tmp_path: Path) -> None:
+    """Unchanged semantic state writes nothing (change-gated)."""
+    status = tmp_path / "status.json"
+    claims = tmp_path / "claims.json"
+    status.write_text(json.dumps({"projects": [{"project": "a", "state": "VERIFIED"}]}))
+    claims.write_text(json.dumps({"claims": []}))
+    store = tmp_path / "store"
+    monkeypatch.setattr(sc, "STATUS_JSON", status)
+    monkeypatch.setattr(sc, "CLAIMS_JSON", claims)
+    monkeypatch.setattr(sc, "CHECKPOINTS_DIR", store)
 
-    # The checkpoint store is VERSIONED history — the test must not pollute
-    # it (or dirty the tree) with test-generated snapshots. Remove what we
-    # created so the store only ever holds real ledger runs.
-    for p in (f1, f2):
-        if p.exists():
-            p.unlink()
+    f1 = sc.create_checkpoint()
+    assert f1 is not None
+
+    # Same state again -> skipped, no new file.
+    f2 = sc.create_checkpoint()
+    assert f2 is None
+    assert len(list(store.glob("*.json"))) == 1
+
+    # Volatile-only differences (timestamp/git HEAD/evidence age) do NOT
+    # trigger a write — evidence_age_h is excluded from the semantic snapshot.
+    status.write_text(json.dumps({"projects": [{"project": "a", "state": "VERIFIED",
+                                                "evidence_age_h": 99.9}]}))
+    f3 = sc.create_checkpoint()
+    assert f3 is None
+    assert len(list(store.glob("*.json"))) == 1
+
+
+def test_latest_checkpoint_snapshot_roundtrip(monkeypatch, tmp_path: Path) -> None:
+    """latest_checkpoint_snapshot reads back the stored semantic snapshot."""
+    status = tmp_path / "status.json"
+    claims = tmp_path / "claims.json"
+    status.write_text(json.dumps({"projects": [{"project": "a", "state": "FAILING"}]}))
+    claims.write_text(json.dumps({"claims": [{"claim_id": "c1"}]}))
+    store = tmp_path / "store"
+    monkeypatch.setattr(sc, "STATUS_JSON", status)
+    monkeypatch.setattr(sc, "CLAIMS_JSON", claims)
+    monkeypatch.setattr(sc, "CHECKPOINTS_DIR", store)
+
+    f1 = sc.create_checkpoint()
+    assert f1 is not None
+    latest = sc.latest_checkpoint_snapshot()
+    assert latest is not None
+    assert latest["projects"][0]["state"] == "FAILING"
+    # claims are normalized to stable fields (timestamps stripped)
+    assert latest["claims"] == [{"claim_id": "c1", "subject": None,
+                                  "claim_type": None, "verification_tier": None,
+                                  "verdict": None}]
+
+    # With no checkpoints yet, latest is None.
+    monkeypatch.setattr(sc, "CHECKPOINTS_DIR", tmp_path / "empty-store")
+    assert sc.latest_checkpoint_snapshot() is None
