@@ -1,6 +1,6 @@
 # Constellation Status (derived from evidence)
 
-Generated: `2026-08-10T06:35:50.443284+00:00` by `scripts/status_report.py`
+Generated: `2026-08-10T06:38:32.310708+00:00` by `scripts/status_report.py`
 
 **Nothing here is asserted — every state is derived from each project's `artifacts/hygiene/` gate artifacts and freshness vs its last git commit.** Missing or stale evidence shows as UNVERIFIED/STALE.
 
@@ -8,11 +8,11 @@ Aggregate verdict: **UNVERIFIED**
 
 | Project | State | Gate | Hygiene | Mutation | Cov | pytest | Evidence age | CI (last run) |
 |---|---|---|---|---|---|---|---|---|
-| msb-v3 | **VERIFIED** | PASS | pass | - | 70.0%/65% | True | 0.0h | - |
-| agent-reach | **VERIFIED** | PASS | pass | 67.5% | 84.0%/75% | True | 0.0h | - |
-| sovereign-mcp-os | **VERIFIED** | PASS | pass | - | 94.0%/85% | True | 0.0h | - |
-| sovereign-outcome-engine | **VERIFIED** | PASS | pass | - | 77.0%/65% | True | 0.0h | - |
-| nexus | **VERIFIED** | PASS | pass | - | 61.0%/60% | True | 0.0h | - |
+| msb-v3 | **VERIFIED** | PASS | pass | - | 70.0%/65% | True | 0.1h | - |
+| agent-reach | **VERIFIED** | PASS | pass | 67.5% | 84.0%/75% | True | 0.1h | - |
+| sovereign-mcp-os | **VERIFIED** | PASS | pass | - | 94.0%/85% | True | 0.1h | - |
+| sovereign-outcome-engine | **VERIFIED** | PASS | pass | - | 77.0%/65% | True | 0.1h | - |
+| nexus | **VERIFIED** | PASS | pass | - | 61.0%/60% | True | 0.1h | - |
 | domain-router | **VERIFIED** | PASS | pass | - | - | True | 0.1h | - |
 | skill-orchestration-os | **UNVERIFIED** | - | - | - | - | - | Noneh | - |
 

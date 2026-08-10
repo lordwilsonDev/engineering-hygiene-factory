@@ -305,6 +305,9 @@ def test_code_commit_after_gate_is_stale(tmp_path, monkeypatch):
 def test_check_ignores_unverified_but_strict_does_not(tmp_path, monkeypatch):
     """--check is the CI canary (absent projects non-fatal); --strict is the
     local constellation-wide gate (anything below VERIFIED is fatal)."""
+    # Hermetic: main() writes STATUS.md/status.json under ROOT — pin it to the
+    # test tree so the suite never clobbers the factory's real status output.
+    monkeypatch.setattr(sr, "ROOT", tmp_path)
     msb = tmp_path / "msb-v3"
     (msb / "artifacts" / "hygiene").mkdir(parents=True)
     (msb / "artifacts" / "hygiene" / "factory_gate.json").write_text(
