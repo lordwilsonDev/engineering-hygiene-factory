@@ -20,7 +20,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CHECKPOINTS_DIR = ROOT / "artifacts" / "status" / "semantic_checkpoints"
+# Versioned by design: checkpoints are the anti-amnesia record (claims,
+# contradictions, decisions across context compression) and must survive —
+# they live OUTSIDE the gitignored artifacts/ tree so every snapshot is
+# committed as evidence. artifacts/ is CI-regenerated scratch; checkpoints/ is
+# durable ledger history.
+CHECKPOINTS_DIR = ROOT / "checkpoints" / "semantic"
 STATUS_JSON = ROOT / "artifacts" / "status" / "status.json"
 CLAIMS_JSON = ROOT / "artifacts" / "status" / "claims.json"
 
