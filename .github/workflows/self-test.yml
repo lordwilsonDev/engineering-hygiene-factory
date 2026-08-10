@@ -30,7 +30,7 @@ jobs:
       - name: Install pytest
         run: pip install --upgrade pip pytest
 
-      - name: Checkout domain-router (d03 sync guard; needs GH_PAT secret)
+      - name: Checkout domain-router (d03 sync guard + strict-gate evidence)
         if: ${{ env.GH_PAT != '' }}
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
@@ -41,6 +41,20 @@ jobs:
           # Must live INSIDE the workspace: actions/checkout rejects paths
           # outside $GITHUB_WORKSPACE (../ was rejected on the first run).
           path: domain-router
+          # fetch-depth: 0 so the strict step's git_head comparison can walk
+          # past the evidence tip commit (see the msb-v3 note below).
+          fetch-depth: 0
+
+      - name: Checkout skill-orchestration-os (strict-gate evidence)
+        if: ${{ env.GH_PAT != '' }}
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        uses: actions/checkout@v4
+        with:
+          repository: lordwilsonDev/skill-orchestration-os
+          token: ${{ secrets.GH_PAT }}
+          path: skill-orchestration-os
+          fetch-depth: 0
 
       - name: Checkout nexus (full-gate sample; needs GH_PAT secret)
         if: ${{ env.GH_PAT != '' }}
@@ -53,12 +67,13 @@ jobs:
           path: nexus
           fetch-depth: 0
 
-      # The four remaining constellation repos — checked out so the --strict
-      # step can gate their committed evidence from fresh clones. Each repo's
-      # OWN factory-gate workflow re-runs its real gate on every push to it;
-      # the factory's strict step checks that every project's committed gate
-      # evidence exists AND says PASS (all five: msb-v3, agent-reach,
-      # sovereign-mcp-os, sovereign-outcome-engine, nexus).
+      # The remaining constellation repos — checked out so the --strict step
+      # can gate their committed evidence from fresh clones. Each repo's OWN
+      # factory-gate workflow re-runs its real gate on every push to it; the
+      # factory's strict step checks that every project's committed gate
+      # evidence exists AND says PASS (all seven: msb-v3, agent-reach,
+      # sovereign-mcp-os, sovereign-outcome-engine, nexus, domain-router,
+      # skill-orchestration-os).
       # fetch-depth: 0 is load-bearing for the strict step's git_head
       # comparison — the evidence commits ARE the repo tips, so a shallow
       # depth-1 clone has no parent to walk to and code_head() would return
@@ -143,12 +158,10 @@ jobs:
       # --strict exits 1 if ANY evaluated project is below VERIFIED (FAILING/
       # UNVERIFIED/STALE) — so a project whose committed gate evidence went
       # missing, flipped to FAILED, or drifted from its code HEAD fails this
-      # push. Scoped via --only to the five repos checked out above (list must
-      # track PROJECTS in scripts/status_report.py — the canonical registry);
-      # domain-router and skill-orchestration-os are excluded because their
-      # evidence is not committed (both are enforced by their own workflows:
-      # domain-router's routing-gate, skill-os's smoke suite). MSB_STATUS_HOME
-      # rebases the constellation onto the checkout workspace.
+      # push. Scoped via --only to the seven repos checked out above (list
+      # must track PROJECTS in scripts/status_report.py — the canonical
+      # registry). MSB_STATUS_HOME rebases the constellation onto the
+      # checkout workspace.
       #
       # NOTE — what strict CAN and CANNOT prove in CI: a fresh checkout sets
       # every file's mtime to checkout time, so the mtime STALE checks are
@@ -165,4 +178,4 @@ jobs:
           MSB_STATUS_HOME: ${{ github.workspace }}
         run: |
           python scripts/status_report.py --strict \
-            --only msb-v3,agent-reach,sovereign-mcp-os,sovereign-outcome-engine,nexus
+            --only msb-v3,agent-reach,sovereign-mcp-os,sovereign-outcome-engine,nexus,domain-router,skill-orchestration-os

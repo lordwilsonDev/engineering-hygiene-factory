@@ -18,9 +18,17 @@ name: strict-gate
 # the mtime check catches it locally; CI cannot. Separate evidence commits
 # are the documented practice.)
 #
+# OPERATING RULE (empirically proven 2026-08-10): the recorded git_head is
+# the last commit NOT touching artifacts/hygiene — so ANY commit outside
+# that directory (code, scripts/, .gitignore — all count as "code" per the
+# pathspec) invalidates the recorded hash and flips the project STALE until
+# its gate is re-run and the regenerated evidence is committed as an
+# evidence-ONLY commit. Re-run gates as part of every change to a project;
+# never mix code and evidence in one commit.
+#
 # Zero-spend: status_report.py is stdlib-only and runs `git log` read-only.
 # No API keys are used, required, or reachable. GH_PAT is needed only to
-# check out the five private constellation repos.
+# check out the seven private constellation repos.
 
 on:
   schedule:
@@ -103,21 +111,44 @@ jobs:
           path: nexus
           fetch-depth: 0
 
+      - name: Checkout domain-router
+        if: ${{ env.GH_PAT != '' }}
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        uses: actions/checkout@v4
+        with:
+          repository: lordwilsonDev/domain-router
+          token: ${{ secrets.GH_PAT }}
+          path: domain-router
+          fetch-depth: 0
+
+      - name: Checkout skill-orchestration-os
+        if: ${{ env.GH_PAT != '' }}
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        uses: actions/checkout@v4
+        with:
+          repository: lordwilsonDev/skill-orchestration-os
+          token: ${{ secrets.GH_PAT }}
+          path: skill-orchestration-os
+          fetch-depth: 0
+
       # The gate itself: any evaluated project below VERIFIED (FAILING,
       # UNVERIFIED, STALE) fails the run — which fails loudly on a schedule
       # via the Actions UI, the run list, and any configured notifications.
       # Deliberately NOT guarded on GH_PAT: if the checkouts above were
       # skipped (missing/rotated secret), the repos are absent here, every
       # project reads UNVERIFIED, and strict exits 1 — a missing PAT becomes
-      # an ops-visible red instead of a silent skip. Scoped to the five repos
-      # with committed evidence; domain-router and skill-orchestration-os are
-      # excluded (their evidence is not committed; both are enforced by their
-      # own workflows). The list must track PROJECTS in scripts/status_report.py
-      # — the canonical registry.
+      # an ops-visible red instead of a silent skip. All seven constellation
+      # repos now carry committed gate evidence (domain-router and
+      # skill-orchestration-os included since 2026-08-10, when their
+      # factory_gate.json/hygiene_aggregate.json became tracked). The list
+      # must track PROJECTS in scripts/status_report.py — the canonical
+      # registry.
       - name: Strict constellation gate (daily — stale evidence fails loudly)
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
           MSB_STATUS_HOME: ${{ github.workspace }}
         run: |
           python scripts/status_report.py --strict \
-            --only msb-v3,agent-reach,sovereign-mcp-os,sovereign-outcome-engine,nexus
+            --only msb-v3,agent-reach,sovereign-mcp-os,sovereign-outcome-engine,nexus,domain-router,skill-orchestration-os

@@ -58,8 +58,12 @@ PROJECTS: list[dict[str, str]] = [
     {"name": "sovereign-mcp-os", "repo": "sovereign-mcp-os", "slug": "lordwilsonDev/sovereign-mcp-os"},
     {"name": "sovereign-outcome-engine", "repo": "sovereign-outcome-engine", "slug": "lordwilsonDev/sovereign-outcome-engine"},
     {"name": "nexus", "repo": "nexus", "slug": "lordwilsonDev/nexus"},
-    {"name": "domain-router", "repo": str(Path.home() / ".hermes" / "domain-router"), "slug": "lordwilsonDev/domain-router"},
-    {"name": "skill-orchestration-os", "repo": str(Path.home() / ".hermes" / "skills" / "skill-orchestration-os"), "slug": "lordwilsonDev/skill-orchestration-os"},
+    # The ~/.hermes trees (domain-router, skill-orchestration-os) live under
+    # ~/.hermes locally but are checked out as bare names in CI. `local` holds
+    # the home-relative subpath; repo_path resolves it under ~ when
+    # MSB_STATUS_HOME is unset and under the checkout workspace when it's set.
+    {"name": "domain-router", "repo": "domain-router", "local": ".hermes/domain-router", "slug": "lordwilsonDev/domain-router"},
+    {"name": "skill-orchestration-os", "repo": "skill-orchestration-os", "local": ".hermes/skills/skill-orchestration-os", "slug": "lordwilsonDev/skill-orchestration-os"},
 ]
 
 def repo_root() -> Path:
@@ -76,16 +80,25 @@ def repo_root() -> Path:
 def repo_path(name: str) -> Path:
     """Resolve a project's repo directory.
 
-    Absolute paths in PROJECTS (and test overrides) win as-is; bare relative
-    names (the constellation repos checked out by CI) resolve under
-    MSB_STATUS_HOME so the factory's own self-test can gate the whole
-    constellation from fresh checkouts.
+    Resolution order: absolute paths in PROJECTS (and test overrides) win
+    as-is; then, when MSB_STATUS_HOME is set (CI), bare names resolve under
+    the checkout workspace; then, when the project declares a `local`
+    subpath (the ~/.hermes trees: domain-router, skill-orchestration-os),
+    the path resolves under the home directory; otherwise bare names resolve
+    under ~ (the default home case for local runs).
     """
     for cfg in PROJECTS:
         if cfg["name"] == name:
             repo = cfg.get("repo", name)
             p = Path(repo)
-            return p if p.is_absolute() else repo_root() / p
+            if p.is_absolute():
+                return p
+            if os.environ.get("MSB_STATUS_HOME", "").strip():
+                return repo_root() / p
+            local = cfg.get("local")
+            if local:
+                return Path.home() / local
+            return repo_root() / p
     return repo_root() / name
 
 # Status ordering for the aggregate verdict: worse wins.
@@ -284,9 +297,8 @@ def build_status(with_ci: bool = False, stale_seconds: int = DEFAULT_STALE_DAYS 
 
     `only` scopes the evaluation to a subset of PROJECTS (by name) — used by
     CI to gate exactly the repos it has checked out, so absent evidence in
-    repos covered by their own workflows (skill-orchestration-os has no
-    factory gate by design; domain-router's evidence lives outside the
-    checkout) can never turn the strict gate permanently red.
+    repos covered by their own workflows can never turn the strict gate
+    permanently red.
     """
     names = set(only) if only else None
     projects: list[dict] = []

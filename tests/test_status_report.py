@@ -321,6 +321,30 @@ def test_repo_path_relative_resolves_under_msb_status_home(tmp_path, monkeypatch
         sr.PROJECTS = old
 
 
+def test_repo_path_local_field_resolves_home_versus_ci(tmp_path, monkeypatch):
+    """The ~/.hermes trees (domain-router, skill-os) resolve to their `local`
+    subpath under ~ when MSB_STATUS_HOME is unset, and to the checkout
+    workspace name when it is set (CI) — so the same PROJECTS registry works
+    for local runs and fresh GitHub checkouts."""
+    old = sr.PROJECTS
+    sr.PROJECTS = [
+        {"name": "domain-router", "repo": "domain-router",
+         "local": ".hermes/domain-router", "slug": "x/dr"},
+        {"name": "skill-orchestration-os", "repo": "skill-orchestration-os",
+         "local": ".hermes/skills/skill-orchestration-os", "slug": "x/so"},
+    ]
+    try:
+        monkeypatch.delenv("MSB_STATUS_HOME", raising=False)
+        assert sr.repo_path("domain-router") == Path.home() / ".hermes" / "domain-router"
+        assert (sr.repo_path("skill-orchestration-os")
+                == Path.home() / ".hermes" / "skills" / "skill-orchestration-os")
+        monkeypatch.setenv("MSB_STATUS_HOME", str(tmp_path))
+        assert sr.repo_path("domain-router") == tmp_path / "domain-router"
+        assert sr.repo_path("skill-orchestration-os") == tmp_path / "skill-orchestration-os"
+    finally:
+        sr.PROJECTS = old
+
+
 def test_recorded_head_parsing():
     """VERIFICATION.git_head must be read as the recorded commit; missing or
     malformed values yield None (falling back to mtime freshness)."""
