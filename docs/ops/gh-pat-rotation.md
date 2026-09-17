@@ -144,19 +144,33 @@ last run that used it OK : 2026-09-08T12:06Z
 first run it was rejected: 2026-09-09T11:45Z      (401 Bad credentials)
 ```
 
-Eight days of red across two repos, with no cause named. The old guards were
+Eight days of red across two repos, with no cause named. All three guards were
 `if: env.GH_PAT != ''` — they tested **presence, never validity**, so a
 present-but-dead token ran the checkout, got a 401, and took every later step
-down with it. Both repos now carry a non-fatal `Validate GH_PAT` preflight that
-names 401 (rotate) vs 403/404 (scope), skips the gated steps instead of
-dying at the first one, and fails a final step so an inert green can never read
-as a verified gate:
+down with it. All three now carry a non-fatal `Validate GH_PAT` preflight that
+names 401 (rotate) vs 403/404 (scope), keeps the dependent steps from dying at
+the first one, and fails a final step so an inert green can never read as a
+verified gate:
 
 | Repo | Guard hardened | Behaviour on a dead token |
 |---|---|---|
 | `engineering-hygiene-factory` | 2026-09-17 | secret-free checks still run; red is attributed, not generic |
-| `domain-router` | 2026-09-17 | all legs skip; final step fails with the cause named |
-| `sovereign-outcome-engine` | **NOT YET** | dies at the sibling checkout with a bare `Bad credentials` |
+| `domain-router` | 2026-09-17 | all 10 legs skip; final step fails with the cause named |
+| `sovereign-outcome-engine` | 2026-09-17 | the factory checkout skips, s05 fails, s01-s04 still report; final step names the cause |
+
+The first two have been observed live against the dead token (runs
+`35211787551` and `35215702840`). The third is committed but has not yet had a
+run — the repo is dormant since 2026-08-10, so the next push is its first and
+its gate will be RED (correctly) until the token is rotated.
+
+Note the third needed a different shape, and not only cosmetically. Its only
+fail-loud property had rested on s05 noticing a missing validator file — which
+in turn rests on committed claim containers existing under
+`artifacts/business/`. Empty that directory and s05 passes trivially ("nothing
+to validate"), so a token problem would have gone GREEN even though four token-
+independent experiments kept running. Its final step therefore asserts the
+validator is **on disk** rather than trusting the token's usability, which
+makes the red independent of what the artifact directory holds.
 
 The cost of this incident was not only the outage. `msb-v3`'s gate published a
 **PASS with `regression_passed: false`** on 2026-09-16 — a false green that
