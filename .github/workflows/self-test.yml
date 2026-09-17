@@ -30,8 +30,51 @@ jobs:
       - name: Install pytest
         run: pip install --upgrade pip pytest
 
+      # Preflight: does GH_PAT actually WORK? The guards below used to be
+      # `if: ${{ env.GH_PAT != '' }}` — the presence of the secret, never its
+      # validity. A present-but-expired token therefore PASSED the guard, RAN
+      # the checkout, got 401 ("Bad credentials"), and GitHub then skipped
+      # every later step — including the ones that need no secret at all (the
+      # zero-spend canary, the enforcement tests, the status canary documented
+      # as ungated "with or without the GH_PAT secret"). That is how a 30-day
+      # expiry went unnoticed for 8 days: the secret was last written
+      # 2026-08-10T04:44Z, its expiry fell at 2026-09-09T04:44Z, and every run
+      # from 2026-09-09T11:45Z onward died at the FIRST checkout. Note the
+      # asymmetry: an ABSENT secret skips these steps gracefully; a DEAD one
+      # detonated. This step never fails — it records validity for the steps
+      # below and annotates the exact cause, so the reason is one line instead
+      # of a log dig. It also prints the token's expiry when GitHub reports it
+      # (fine-grained PATs do), which is how this should be spotted BEFORE it
+      # bites rather than after.
+      - name: Validate GH_PAT (non-fatal — reports, never blocks the secret-free checks)
+        id: pat
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -z "${GH_PAT:-}" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::GH_PAT secret is not set — the seven cross-repo checkouts will be skipped; every secret-free check below still runs."
+            exit 0
+          fi
+          code=$(curl -sS -o /dev/null -D /tmp/pat_headers -w '%{http_code}' \
+                   -H "Authorization: Bearer $GH_PAT" \
+                   -H "Accept: application/vnd.github+json" \
+                   https://api.github.com/user) || code=000
+          exp=$(grep -i '^github-authentication-token-expiration:' /tmp/pat_headers 2>/dev/null | sed 's/^[^:]*:[[:space:]]*//; s/\r$//' || true)
+          if [ -n "$exp" ]; then echo "GH_PAT expires: $exp"; else echo "GH_PAT expiry: not reported for this token type"; fi
+          if [ "$code" = "200" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            echo "GH_PAT valid (HTTP 200)"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::error::GH_PAT rejected (HTTP $code) — the token is expired or revoked. Rotate it: create a token with Contents:read on agent-reach plus the six public sample repos, then 'gh secret set GH_PAT'. The cross-repo checkouts will be skipped; the secret-free checks still run and report, and this run stays RED."
+          fi
+
       - name: Checkout domain-router (d03 sync guard + strict-gate evidence)
-        if: ${{ env.GH_PAT != '' }}
+        if: ${{ steps.pat.outputs.ok == 'true' }}
+        # continue-on-error so a flaky/dead token cannot take the secret-free
+        # steps down with it (see the preflight above).
+        continue-on-error: true
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         uses: actions/checkout@v4
@@ -46,7 +89,8 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout skill-orchestration-os (strict-gate evidence)
-        if: ${{ env.GH_PAT != '' }}
+        if: ${{ steps.pat.outputs.ok == 'true' }}
+        continue-on-error: true
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         uses: actions/checkout@v4
@@ -57,7 +101,8 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout nexus (full-gate sample; needs GH_PAT secret)
-        if: ${{ env.GH_PAT != '' }}
+        if: ${{ steps.pat.outputs.ok == 'true' }}
+        continue-on-error: true
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         uses: actions/checkout@v4
@@ -79,7 +124,8 @@ jobs:
       # depth-1 clone has no parent to walk to and code_head() would return
       # None, silently disabling the hash staleness check.
       - name: Checkout msb-v3 (strict-gate evidence)
-        if: ${{ env.GH_PAT != '' }}
+        if: ${{ steps.pat.outputs.ok == 'true' }}
+        continue-on-error: true
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         uses: actions/checkout@v4
@@ -90,7 +136,8 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout agent-reach (strict-gate evidence)
-        if: ${{ env.GH_PAT != '' }}
+        if: ${{ steps.pat.outputs.ok == 'true' }}
+        continue-on-error: true
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         uses: actions/checkout@v4
@@ -101,7 +148,8 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout sovereign-mcp-os (strict-gate evidence)
-        if: ${{ env.GH_PAT != '' }}
+        if: ${{ steps.pat.outputs.ok == 'true' }}
+        continue-on-error: true
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         uses: actions/checkout@v4
@@ -112,7 +160,8 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout sovereign-outcome-engine (strict-gate evidence)
-        if: ${{ env.GH_PAT != '' }}
+        if: ${{ steps.pat.outputs.ok == 'true' }}
+        continue-on-error: true
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         uses: actions/checkout@v4
@@ -122,10 +171,22 @@ jobs:
           path: sovereign-outcome-engine
           fetch-depth: 0
 
+      # The next two steps need NO secret. `!cancelled()` (not `always()`) is
+      # the correct "run even if a step above failed" form: it still stops a
+      # cancelled run. These two are the point of the whole hardening — they
+      # are stdlib-only / sibling-tolerant by design, so a token problem must
+      # never be able to suppress them.
       - name: run_factory.py --self-test (three env boundaries)
+        if: ${{ !cancelled() }}
         run: python scripts/run_factory.py --self-test
 
+      # Needs no secret. The d03/d05/d07 halves read sibling runners from
+      # domain-router; tests/test_d03_sync.py SKIPS with an explicit reason
+      # when the sibling checkout is absent, so running this without the
+      # cross-repo checkouts degrades to a visible skip rather than a
+      # confusing failure.
       - name: Enforcement tests + d03 scrub-list sync guard
+        if: ${{ !cancelled() }}
         env:
           D03_RUNNER_PATH: ${{ github.workspace }}/domain-router/scripts/hygiene/d03_orchestration_smoke_runner.py
         run: python -m pytest tests/ -q
@@ -135,8 +196,12 @@ jobs:
       # scoped out — no server needed). This exercises run_pytest,
       # run_suite, _extract_json_object, build_gate and the gate JSON write
       # exactly as production uses them, on every push.
+      # Genuinely PAT-dependent: without the nexus checkout this can only
+      # throw file-not-found, so it SKIPS when the token is unusable rather
+      # than producing a useless red. The final report step keeps that skip
+      # loud instead of silent.
       - name: Full factory gate on nexus (whole loop end-to-end)
-        if: ${{ env.GH_PAT != '' }}
+        if: ${{ !cancelled() && steps.pat.outputs.ok == 'true' }}
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
           MSB_REPO: ${{ github.workspace }}/nexus
@@ -150,9 +215,12 @@ jobs:
           python -c "import json; g=json.load(open('${{ github.workspace }}/nexus/artifacts/hygiene/factory_gate.json'))['RELEASE_VERDICT']; print('gate:', g['release_verdict'], '| regression:', g['regression_passed'], '| violations:', g['artifact_schema_violations'], '| unknowns:', len(g['unresolved_unknowns'])); assert g['regression_passed'] is True, 'nexus pytest suite did not pass in-factory — a red suite must never publish PASS (verdict=%s)' % g['release_verdict']; assert g['release_verdict']=='PASS', 'full gate not PASS'"
 
       # Meta-move canary: status is DERIVED from evidence, never asserted.
-      # Ungated on purpose — this proves the generator emits a well-formed
-      # status.json on EVERY push, with or without the GH_PAT secret.
+      # Needs no secret and no sibling checkout. `!cancelled()` makes the
+      # "with or without the GH_PAT secret" promise below TRUE again — it was
+      # false from 2026-09-09 onward, when a dead token failed the first
+      # checkout and took every later step with it.
       - name: Status canary (derive, don't assert)
+        if: ${{ !cancelled() }}
         run: |
           python scripts/status_report.py --check
           python -c "import json; d=json.load(open('artifacts/status/status.json')); assert d['projects'], 'status.json must list projects'; print('status.json OK — aggregate:', d['verdict'])"
@@ -176,12 +244,36 @@ jobs:
       # age window (evidence older than N days) remains a local-run property;
       # the scheduled strict-gate.yml workflow re-derives this same gate
       # daily so drift fails loudly even without a push.
+      # Deliberately NOT guarded on GH_PAT (same reasoning as strict-gate.yml):
+      # with the repos absent every project reads UNVERIFIED and strict exits
+      # 1, so a token problem stays an ops-visible red instead of a silent
+      # skip. The one thing that had to change is ATTRIBUTION — that red
+      # otherwise reads as "seven projects regressed" when the truth is
+      # "seven repos were never checked out". The guard line below says which.
       - name: Strict constellation gate (UNVERIFIED/FAILING/STALE/REGRESSED/CONTESTED fails)
-        if: ${{ env.GH_PAT != '' }}
+        if: ${{ !cancelled() }}
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
           GH_TOKEN: ${{ secrets.GH_PAT }}
           MSB_STATUS_HOME: ${{ github.workspace }}
         run: |
+          if [ "${{ steps.pat.outputs.ok }}" != "true" ]; then
+            echo "::error::GH_PAT was unusable, so no constellation repo could be checked out — the UNVERIFIED verdict below is a MISSING-EVIDENCE artifact of the token, not a project regression."
+          fi
           python scripts/status_report.py --strict --with-ci \
             --only msb-v3,agent-reach,sovereign-mcp-os,sovereign-outcome-engine,nexus,domain-router,skill-orchestration-os
+
+      # Degradation is loud but LATE: a dead or absent GH_PAT still fails the
+      # run (a green run over skipped gates is exactly the false-green this
+      # repo exists to prevent), but only after every secret-free check has
+      # already executed and reported. Before this change the same situation
+      # produced a red for 8 days that nobody could attribute without digging
+      # through checkout logs.
+      - name: Report degraded cross-repo coverage
+        if: ${{ !cancelled() }}
+        run: |
+          if [ "${{ steps.pat.outputs.ok }}" != "true" ]; then
+            echo "::error::GH_PAT was unusable, so the seven cross-repo checks did not run. Rotate the token and re-run — see the 'Validate GH_PAT' step for the HTTP status and expiry."
+            exit 1
+          fi
+          echo "GH_PAT usable — full cross-repo coverage ran."

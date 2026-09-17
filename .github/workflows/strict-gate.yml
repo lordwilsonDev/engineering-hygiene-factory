@@ -28,8 +28,20 @@ name: strict-gate
 #
 # Zero-spend: status_report.py is stdlib-only and runs `git log`/`gh run
 # list` read-only. No API keys are used, required, or reachable. GH_PAT is
-# needed only to check out the seven private constellation repos and to let
-# gh (via GH_TOKEN) read their factory-gate run conclusions for REGRESSED.
+# needed to check out the constellation repos and to let gh (via GH_TOKEN)
+# read their factory-gate run conclusions for REGRESSED. Scope note for
+# whoever rotates that token: only agent-reach is PRIVATE — nexus, msb-v3,
+# domain-router, skill-orchestration-os, sovereign-mcp-os and
+# sovereign-outcome-engine are all public — so the PAT needs Contents:read on
+# agent-reach, and reach on the public six can come from `public_repo`
+# (classic) or from explicitly selecting them (fine-grained).
+#
+# Token lifetime (learned the hard way 2026-09-09): a present-but-DEAD secret
+# is worse than an absent one. `if: ${{ env.GH_PAT != '' }}` tests presence,
+# never validity, so an expired token passed the guard, ran the checkout, got
+# 401, and GitHub skipped every later step. The preflight below records
+# validity in a step output; the checkouts skip on a bad token and the gate
+# still runs to report UNVERIFIED — the outcome this workflow always intended.
 
 on:
   schedule:
@@ -50,8 +62,36 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Non-fatal validity probe: never fails the run itself, just records
+      # whether GH_PAT works and annotates the cause (with the expiry when
+      # GitHub reports it). See the header note.
+      - name: Validate GH_PAT (non-fatal — annotates the cause, gates the checkouts)
+        id: pat
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -z "${GH_PAT:-}" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::GH_PAT secret is not set — the constellation checkouts will be skipped; the gate below still runs and reports every project UNVERIFIED."
+            exit 0
+          fi
+          code=$(curl -sS -o /dev/null -D /tmp/pat_headers -w '%{http_code}' \
+                   -H "Authorization: Bearer $GH_PAT" \
+                   -H "Accept: application/vnd.github+json" \
+                   https://api.github.com/user) || code=000
+          exp=$(grep -i '^github-authentication-token-expiration:' /tmp/pat_headers 2>/dev/null | sed 's/^[^:]*:[[:space:]]*//; s/\r$//' || true)
+          if [ -n "$exp" ]; then echo "GH_PAT expires: $exp"; else echo "GH_PAT expiry: not reported for this token type"; fi
+          if [ "$code" = "200" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            echo "GH_PAT valid (HTTP 200)"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::error::GH_PAT rejected (HTTP $code) — the token is expired or revoked. Rotate it (Contents:read on agent-reach plus the six public constellation repos) and run 'gh secret set GH_PAT'."
+          fi
+
       - name: Checkout msb-v3
-        if: ${{ env.GH_PAT != '' }}
+        if: ${{ steps.pat.outputs.ok == 'true' }}
+        continue-on-error: true
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         uses: actions/checkout@v4
@@ -69,7 +109,8 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout agent-reach
-        if: ${{ env.GH_PAT != '' }}
+        if: ${{ steps.pat.outputs.ok == 'true' }}
+        continue-on-error: true
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         uses: actions/checkout@v4
@@ -80,7 +121,8 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout sovereign-mcp-os
-        if: ${{ env.GH_PAT != '' }}
+        if: ${{ steps.pat.outputs.ok == 'true' }}
+        continue-on-error: true
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         uses: actions/checkout@v4
@@ -91,7 +133,8 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout sovereign-outcome-engine
-        if: ${{ env.GH_PAT != '' }}
+        if: ${{ steps.pat.outputs.ok == 'true' }}
+        continue-on-error: true
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         uses: actions/checkout@v4
@@ -102,7 +145,8 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout nexus
-        if: ${{ env.GH_PAT != '' }}
+        if: ${{ steps.pat.outputs.ok == 'true' }}
+        continue-on-error: true
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         uses: actions/checkout@v4
@@ -113,7 +157,8 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout domain-router
-        if: ${{ env.GH_PAT != '' }}
+        if: ${{ steps.pat.outputs.ok == 'true' }}
+        continue-on-error: true
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         uses: actions/checkout@v4
@@ -124,7 +169,8 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout skill-orchestration-os
-        if: ${{ env.GH_PAT != '' }}
+        if: ${{ steps.pat.outputs.ok == 'true' }}
+        continue-on-error: true
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         uses: actions/checkout@v4
@@ -148,10 +194,17 @@ jobs:
       # current red). The --only list must track PROJECTS in
       # scripts/status_report.py — the canonical registry.
       - name: Strict constellation gate (daily — stale/regressed evidence fails loudly)
+        if: ${{ !cancelled() }}
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
           GH_TOKEN: ${{ secrets.GH_PAT }}
           MSB_STATUS_HOME: ${{ github.workspace }}
         run: |
+          # Attribution guard: the UNVERIFIED verdict below is MEANT to be
+          # reachable from a missing token, but it must not be misread as
+          # seven projects regressing. Say which it is, every run.
+          if [ "${{ steps.pat.outputs.ok }}" != "true" ]; then
+            echo "::error::GH_PAT was unusable, so no constellation repo could be checked out — the UNVERIFIED verdict below is a MISSING-EVIDENCE artifact of the token, not a project regression."
+          fi
           python scripts/status_report.py --strict --with-ci \
             --only msb-v3,agent-reach,sovereign-mcp-os,sovereign-outcome-engine,nexus,domain-router,skill-orchestration-os
