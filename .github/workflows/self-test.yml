@@ -144,7 +144,10 @@ jobs:
         run: |
           pip install -q pytest pytest-cov fastapi uvicorn rich prompt-toolkit pyyaml ollama
           python scripts/run_factory.py --project "${{ github.workspace }}/nexus"
-          python -c "import json; g=json.load(open('${{ github.workspace }}/nexus/artifacts/hygiene/factory_gate.json'))['RELEASE_VERDICT']; print('gate:', g['release_verdict'], '| regression:', g['regression_passed'], '| violations:', g['artifact_schema_violations'], '| unknowns:', len(g['unresolved_unknowns'])); assert g['release_verdict']=='PASS', 'full gate not PASS'"
+          # Two assertions, same pass/fail, better diagnostics: PASS now
+          # REQUIRES regression_passed, so a red nexus suite surfaces as
+          # "regression_passed=False" rather than a bare "full gate not PASS".
+          python -c "import json; g=json.load(open('${{ github.workspace }}/nexus/artifacts/hygiene/factory_gate.json'))['RELEASE_VERDICT']; print('gate:', g['release_verdict'], '| regression:', g['regression_passed'], '| violations:', g['artifact_schema_violations'], '| unknowns:', len(g['unresolved_unknowns'])); assert g['regression_passed'] is True, 'nexus pytest suite did not pass in-factory — a red suite must never publish PASS (verdict=%s)' % g['release_verdict']; assert g['release_verdict']=='PASS', 'full gate not PASS'"
 
       # Meta-move canary: status is DERIVED from evidence, never asserted.
       # Ungated on purpose — this proves the generator emits a well-formed

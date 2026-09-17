@@ -124,6 +124,22 @@ built-in msb-v3 suite):
 `unresolved_unknowns` going EMPTY is the definition of a fully-verified gate.
 It contains exactly what lacks evidence, never prose.
 
+### Verdict derivation (`release_verdict`)
+
+`release_verdict` maps the weakest member verdict onto
+`fail → FAILED`, `blocked`/`partial` → `BLOCKED`, `pass` → `PASS`,
+`unknown` → `UNKNOWN`, and then applies one **release-critical guard**:
+`PASS` is never emitted while `regression_passed` is False. A green member
+suite cannot outvote the project's own red test suite; the verdict is
+downgraded `PASS → BLOCKED` and the reason is recorded in both `notes` and
+`unresolved_unknowns`.
+
+It downgrades to `BLOCKED` rather than `FAILED` on purpose: `main()` exits 1
+only for `FAILED`, and callers (e.g. `msb-v3/scripts/factory_gate_daily.sh`)
+read a non-zero exit as "the factory crashed" — which returns before logging
+the `gate_run` event or committing the evidence at all. A red suite has to
+stay visible as a verdict, not vanish into a crash alert.
+
 ### Scheduling (optional)
 
 The msb-v3 repo ships a launchd LaunchAgent that runs the factory daily and

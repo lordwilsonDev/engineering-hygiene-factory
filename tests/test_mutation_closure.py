@@ -262,12 +262,49 @@ def test_build_gate_no_results_is_blocked(tmp_path) -> None:
 
 
 def test_build_gate_verdict_map(tmp_path) -> None:
+    # regression evidence is supplied because PASS now REQUIRES it: without a
+    # passing suite the map's "pass" row is downgraded (see the guard test
+    # below), so the suite_verdict → release_verdict mapping is only observable
+    # with regression_passed=True.
     for verdict, expected in [("fail", "FAILED"), ("blocked", "BLOCKED"),
                               ("partial", "BLOCKED"), ("pass", "PASS"),
                               ("unknown", "UNKNOWN"), ("bogus", "UNKNOWN")]:
-        gate = rf.build_gate([_result("fuzzing")], verdict, tmp_path)
+        gate = rf.build_gate([_result("fuzzing")], verdict, tmp_path,
+                             regression={"passed": True})
         assert gate["release_verdict"] == expected, verdict
         assert gate["critical_failures_resolved"] == (verdict != "fail")
+
+
+def test_build_gate_red_regression_downgrades_pass_to_blocked(tmp_path) -> None:
+    """A green member suite cannot outvote the project's own red test suite.
+
+    Regression test for the false-green: every member passed, so the old
+    verdict logic returned PASS while regression_passed sat False in the same
+    JSON (and the gate published + pushed that PASS).
+    """
+    gate = rf.build_gate([_result("fuzzing")], "pass", tmp_path,
+                         regression={"passed": False,
+                                     "summary": "1 failed, 3346 passed, 20 errors"})
+    assert gate["regression_passed"] is False
+    assert gate["release_verdict"] == "BLOCKED"
+    assert any("regression_passed=false" in n for n in gate["notes"])
+    assert any("release verdict downgraded PASS→BLOCKED" in n for n in gate["notes"])
+    # The reason is disclosed as an unknown, not only as a note.
+    assert any("pytest suite did not pass" in u for u in gate["unresolved_unknowns"])
+
+
+def test_build_gate_green_regression_keeps_pass(tmp_path) -> None:
+    gate = rf.build_gate([_result("fuzzing")], "pass", tmp_path,
+                         regression={"passed": True, "summary": "3351 passed"})
+    assert gate["release_verdict"] == "PASS"
+    assert "notes" not in gate  # nothing downgraded, nothing to annotate
+
+
+def test_build_gate_missing_regression_evidence_is_not_pass(tmp_path) -> None:
+    """Absent pytest evidence must not read as a passing suite."""
+    gate = rf.build_gate([_result("fuzzing")], "pass", tmp_path)
+    assert gate["regression_passed"] is False
+    assert gate["release_verdict"] == "BLOCKED"
 
 
 def test_build_gate_evidence_fields(tmp_path) -> None:
@@ -714,6 +751,25 @@ def test_run_factory_main_coverage_miss_forces_failed(tmp_path, monkeypatch) -> 
     gate = json.loads((tmp_path / "artifacts" / "hygiene" / "factory_gate.json").read_text())
     assert gate["RELEASE_VERDICT"]["release_verdict"] == "FAILED"
     assert any("coverage floor not met" in u for u in gate["RELEASE_VERDICT"]["unresolved_unknowns"])
+
+
+def test_run_factory_main_red_regression_blocks_and_exits_zero(tmp_path, monkeypatch) -> None:
+    """suite green + pytest red => BLOCKED, and exit 0 is load-bearing.
+
+    The daily driver treats a non-zero exit as "factory crashed" and returns
+    before logging the gate_run event or committing the evidence — so the
+    downgrade must NOT reach FAILED. This asserts the whole contract: verdict
+    read from the written JSON, and the process exit the driver branches on.
+    """
+    _monkeypatch_gate_inputs(tmp_path, monkeypatch, suite_verdict="pass",
+                             pytest_passed=False)
+    monkeypatch.setattr(sys, "argv", ["run_factory", "--project", str(tmp_path)])
+    assert rf.main() == 0
+    gate = json.loads((tmp_path / "artifacts" / "hygiene" / "factory_gate.json").read_text())
+    rv = gate["RELEASE_VERDICT"]
+    assert rv["release_verdict"] == "BLOCKED"
+    assert rv["regression_passed"] is False
+    assert any("downgraded PASS→BLOCKED" in n for n in rv["notes"])
 
 
 def test_run_factory_main_live_auth_scoped_out_note(tmp_path, monkeypatch) -> None:

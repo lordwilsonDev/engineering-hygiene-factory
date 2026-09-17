@@ -625,7 +625,36 @@ def build_gate(results: list[dict[str, Any]], suite_verdict: str, project: Path,
     verdict_map = {"fail": "FAILED", "blocked": "BLOCKED", "partial": "BLOCKED",
                    "pass": "PASS", "unknown": "UNKNOWN"}
     release = verdict_map.get(suite_verdict, "UNKNOWN")
-    return {**gate, "release_verdict": release, "unresolved_unknowns": unknowns}
+
+    # regression_passed is RELEASE-CRITICAL, not advisory. PASS is a claim
+    # that the project is releasable, and the project's own red test suite
+    # contradicts it — so a green member suite must never outvote it. Before
+    # this guard the verdict was derived from the hygiene members alone: 12
+    # consecutive msb-v3 evidence commits published PASS while recording
+    # regression_passed=False (the failure only ever surfaced as an
+    # unresolved_unknown nobody acted on). Never let that green out again.
+    #
+    # BLOCKED, not FAILED, and deliberately so:
+    #   * FAILED means a member reported `fail`; a red pytest run is "not
+    #     proven releasable", which is exactly what BLOCKED means here.
+    #   * exit-code contract: main() returns 1 ONLY for FAILED, and the msb-v3
+    #     daily driver (scripts/factory_gate_daily.sh) reads a non-zero exit
+    #     as "factory crashed" — it then sends a CRASH alert and returns
+    #     BEFORE writing the gate_run event or committing the evidence. So a
+    #     forced FAILED would hide a red suite behind a crash notification and
+    #     throw the evidence away. BLOCKED keeps it visible: gate_run logged,
+    #     evidence committed [do-not-push], "not PASS" alerted.
+    notes: list[str] = []
+    if release == "PASS" and not gate["regression_passed"]:
+        release = "BLOCKED"
+        notes.append(
+            "regression_passed=false — release verdict downgraded PASS→BLOCKED "
+            f"({regression.get('summary', 'not run')})"
+        )
+    verdict = {**gate, "release_verdict": release, "unresolved_unknowns": unknowns}
+    if notes:
+        verdict["notes"] = notes
+    return verdict
 
 
 def main() -> int:
