@@ -8,7 +8,9 @@ artifacts/status/semantic_checkpoints/<iso-date>.json containing:
 - project_states (from status.json)
 - claims (from claims.json)
 - non_verified_evidence (CONTESTED/REGRESSED/STALE projects + commit SHAs)
-- content_hash (SHA256 digest of payload)
+- content_hash (SHA256 digest of the semantic snapshot — a CONTENT id, so
+  identical semantic state hashes identically; see _semantic_snapshot)
+- unreadable_inputs (inputs that existed but could not be parsed)
 """
 
 from __future__ import annotations
@@ -48,7 +50,27 @@ def get_factory_git_head() -> str:
         return "unknown"
 
 
-def _semantic_snapshot(status_data: dict, claims_data: object) -> dict:
+def _project_entries(status_data: dict) -> list[dict]:
+    """`status.json`'s projects as a list of dicts, in either supported shape.
+
+    List form is canonical (status_report.py emits it); the dict form
+    (name -> info) is tolerated. Deliberately ONE normalizer used by both the
+    snapshot and the non_verified_evidence collector: those two used to
+    disagree about the dict form, and the disagreement silently dropped
+    CONTESTED/REGRESSED/STALE evidence — the negative evidence this record
+    exists to preserve.
+    """
+    projects = (status_data or {}).get("projects", {})
+    if isinstance(projects, dict):
+        return [{"project": name, **info}
+                for name, info in projects.items() if isinstance(info, dict)]
+    if isinstance(projects, list):
+        return [info for info in projects if isinstance(info, dict)]
+    return []
+
+
+def _semantic_snapshot(status_data: dict, claims_data: object,
+                       unreadable: tuple[str, ...] = ()) -> dict:
     """The parts of a checkpoint that carry semantic meaning.
 
     Timestamps, factory git HEAD, absolute repo paths, and evidence ages are
@@ -56,18 +78,16 @@ def _semantic_snapshot(status_data: dict, claims_data: object) -> dict:
     are excluded so two runs with the same semantic state hash identically.
     Change-gating on this snapshot is what keeps the versioned store a record
     of MEANINGFUL state, not a near-duplicate per run.
+
+    `unreadable` names inputs that EXISTED but could not be parsed. It belongs
+    to the snapshot because a corrupt status.json would otherwise project to
+    the same snapshot as "no projects at all": the record would assert an
+    empty constellation as fact rather than report that it could not read one,
+    and a corruption event would leave no trace. Naming it also gives the
+    recovery (file readable again) its own transition back.
     """
-    projects = status_data.get("projects", {})
-    if isinstance(projects, dict):
-        projects = [
-            {"project": p_name, **p_info}
-            for p_name, p_info in projects.items()
-            if isinstance(p_info, dict)
-        ]
     stable_projects = []
-    for p_info in projects if isinstance(projects, list) else []:
-        if not isinstance(p_info, dict):
-            continue
+    for p_info in _project_entries(status_data):
         p_name = p_info.get("project") or p_info.get("name")
         if not p_name:
             continue
@@ -94,7 +114,8 @@ def _semantic_snapshot(status_data: dict, claims_data: object) -> dict:
         stable_claims.append({k: c.get(k) for k in (
             "claim_id", "subject", "claim_type", "verification_tier", "verdict")})
     stable_claims.sort(key=lambda c: c.get("claim_id", ""))
-    return {"projects": stable_projects, "claims": stable_claims}
+    return {"projects": stable_projects, "claims": stable_claims,
+            "unreadable": sorted(unreadable)}
 
 
 def latest_checkpoint_snapshot() -> dict | None:
@@ -122,30 +143,33 @@ def create_checkpoint() -> Path | None:
     ts_str = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     iso_date = datetime.now(timezone.utc).isoformat()
 
+    # An input that exists but cannot be parsed is NOT the same as an absent
+    # one: absent means "the ledger has not produced this yet", unparseable
+    # means "something is wrong". Only the second is recorded (see
+    # _semantic_snapshot).
+    unreadable: list[str] = []
     status_data = {}
     if STATUS_JSON.exists():
         try:
             status_data = json.loads(STATUS_JSON.read_text(encoding="utf-8"))
         except Exception:
-            pass
+            unreadable.append("status")
 
     claims_data = []
     if CLAIMS_JSON.exists():
         try:
             claims_data = json.loads(CLAIMS_JSON.read_text(encoding="utf-8"))
         except Exception:
-            pass
+            unreadable.append("claims")
 
-    snapshot = _semantic_snapshot(status_data, claims_data)
+    snapshot = _semantic_snapshot(status_data, claims_data, tuple(unreadable))
     if snapshot == latest_checkpoint_snapshot():
         print("semantic checkpoint: state unchanged since last checkpoint — skipped")
         return None
 
     projects = status_data.get("projects", [])
     non_verified = {}
-    for p_info in projects if isinstance(projects, list) else []:
-        if not isinstance(p_info, dict):
-            continue
+    for p_info in _project_entries(status_data):
         p_name = p_info.get("project") or p_info.get("name")
         if not p_name:
             continue
@@ -160,14 +184,26 @@ def create_checkpoint() -> Path | None:
     payload = {
         "timestamp": iso_date,
         "factory_git_head": get_factory_git_head(),
-        "projects_count": len(projects) if isinstance(projects, list) else len(projects),
+        # `projects` may be a list or a dict; anything else (e.g. null) must
+        # not crash a module whose contract is "never fail the caller".
+        "projects_count": len(projects) if isinstance(projects, (list, dict)) else 0,
         "projects": projects,
         "claims": claims_data,
         "non_verified_evidence": non_verified,
+        "unreadable_inputs": unreadable,
         "semantic_snapshot": snapshot,
     }
 
-    raw_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
+    # The hash covers the SEMANTIC SNAPSHOT, not the payload. Hashing the whole
+    # payload included `timestamp` (and environment-dependent project paths), so
+    # identical content produced different hashes — the exact opposite of the
+    # invariant _semantic_snapshot documents above — and the filename suffix
+    # was a timestamp in disguise. Now the change-gate (`snapshot ==`) and the
+    # id (`content_hash`) agree on what "content" means.
+    # NOTE: checkpoints written before 2026-09-17 carry hashes from the old
+    # rule. They are immutable history and are left as they are; the next real
+    # state change writes the first content-addressed file.
+    raw_bytes = json.dumps(snapshot, sort_keys=True).encode("utf-8")
     content_hash = hashlib.sha256(raw_bytes).hexdigest()
     payload["content_hash"] = content_hash
 
