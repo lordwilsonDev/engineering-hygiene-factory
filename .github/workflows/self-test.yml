@@ -74,8 +74,41 @@ jobs:
           if [ "$code" = "200" ]; then
             echo "ok=true" >> "$GITHUB_OUTPUT"
             echo "GH_PAT valid (HTTP 200)"
+
+            # VALIDITY IS NOT ACCESS. The seven checkouts below need
+            # Contents:read on lordwilsonDev/agent-reach (private) plus reach
+            # on the six public repos. A valid but under-scoped token passes
+            # the probe above and then 403/404s at the checkouts, producing a
+            # red whose UNVERIFIED verdicts look exactly like an expired
+            # token's — so probe every repo by NAME, and let the annotation
+            # name the FIX (grant scope) rather than sending someone to
+            # rotate a token that was never dead.
+            #
+            # Deliberately NOT folded into `ok`: a subset failure must not
+            # stop the repos that DO resolve from being checked out, or one
+            # missing scope would downgrade all seven verdicts to UNVERIFIED
+            # instead of six true readings and one attributed gap.
+            UNREACHABLE=""
+            for r in msb-v3 agent-reach sovereign-mcp-os sovereign-outcome-engine nexus domain-router skill-orchestration-os; do
+              rc=$(curl -sS -o /dev/null -w '%{http_code}' \
+                     -H "Authorization: Bearer $GH_PAT" \
+                     -H "Accept: application/vnd.github+json" \
+                     "https://api.github.com/repos/lordwilsonDev/$r") || rc=000
+              if [ "$rc" = "200" ]; then
+                printf '  %-24s reachable (HTTP 200)\n' "$r"
+              else
+                printf '  %-24s UNREACHABLE (HTTP %s)\n' "$r" "$rc"
+                UNREACHABLE="$UNREACHABLE $r"
+              fi
+            done
+            UNREACHABLE="${UNREACHABLE# }"
+            echo "unreachable=$UNREACHABLE" >> "$GITHUB_OUTPUT"
+            if [ -n "$UNREACHABLE" ]; then
+              echo "::error::GH_PAT is valid but cannot read: $UNREACHABLE. Grant that token Contents:Read on each of those repos (agent-reach is private, so it must be selected explicitly). They cannot be checked out, so their verdicts below read UNVERIFIED — a SCOPE artifact, not a project regression."
+            fi
           else
             echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "unreachable=" >> "$GITHUB_OUTPUT"
             echo "::error::GH_PAT rejected (HTTP $code) — the token is expired or revoked. Rotate it: create a token with Contents:read on agent-reach plus the six public sample repos, then 'gh secret set GH_PAT'. The cross-repo checkouts will be skipped; the secret-free checks still run and report, and this run stays RED."
           fi
 
@@ -285,4 +318,13 @@ jobs:
             echo "::error::GH_PAT was unusable, so the seven cross-repo checks did not run. Rotate the token and re-run — see the 'Validate GH_PAT' step for the HTTP status and expiry."
             exit 1
           fi
-          echo "GH_PAT usable — full cross-repo coverage ran."
+          # A valid-but-scoped-wrong token used to land here as "GH_PAT usable
+          # — full cross-repo coverage ran", which was false: the unreachable
+          # repos were silently absent and their verdicts read UNVERIFIED
+          # under a success message. Fail on SCOPE too, naming the repos, so
+          # the two causes (rotate vs grant) never share a message.
+          if [ -n "${{ steps.pat.outputs.unreachable }}" ]; then
+            echo "::error::GH_PAT is valid but could not read: ${{ steps.pat.outputs.unreachable }} — those repos were not checked out, so the strict step's UNVERIFIED verdict for them is a SCOPE artifact, not a regression. Grant Contents:Read and re-run."
+            exit 1
+          fi
+          echo "GH_PAT usable and every constellation repo reachable — full cross-repo coverage ran."
