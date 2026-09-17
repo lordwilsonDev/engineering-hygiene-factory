@@ -45,10 +45,29 @@ name: strict-gate
 
 on:
   schedule:
-    # Daily 07:15 UTC — just after the self-test canary (06:30) so a
-    # scheduled run exercises the committed evidence at a consistent point
-    # in the day. Cron syntax: minute hour day-of-month month day-of-week.
-    - cron: "15 7 * * *"
+    # Daily 14:15 UTC. The hour is load-bearing, so here is the arithmetic.
+    #
+    # ORDERING INVARIANT: this judge must run AFTER the evidence producers,
+    # or it grades yesterday's proof and reports stale evidence that has in
+    # fact already been refreshed. msb-v3's factory_gate.json is produced by
+    # scripts/factory_gate_daily.sh under launchd on a LOCAL clock
+    # (06:15 America/Chicago), so its UTC landing time moves with DST:
+    #     06:15 CDT (Mar-Nov) = 11:15 UTC -> proof ready ~11:22 UTC
+    #     06:15 CST (Nov-Mar) = 12:15 UTC -> proof ready ~12:22 UTC  <- binding
+    # The gate itself takes ~6.5 min, so the proof exists by ~12:22 UTC at the
+    # latest. 14:15 UTC clears that by ~1h50m.
+    #
+    # This cron was "15 7 * * *" (07:15 UTC) until 2026-09-17 — FOUR HOURS
+    # BEFORE the producer ran — so every run graded the previous morning's
+    # evidence and flagged msb-v3 STALE on any day its code had moved, even
+    # though the next producer run would (and did) fix it. It was reading a
+    # correct hash comparison against a needlessly old snapshot.
+    #
+    # RULE for any future change: clear the producer in the WORST DST offset
+    # (12:15 UTC, winter), never the local-hours one. A fixed UTC cron cannot
+    # track a local-clock producer, so the schedule must absorb the drift.
+    # Cron syntax: minute hour day-of-month month day-of-week.
+    - cron: "15 14 * * *"
   workflow_dispatch: {}  # manual trigger for on-demand verification
 
 jobs:

@@ -13,7 +13,16 @@ on:
   push:
     branches: [main]
   schedule:
-    - cron: "30 6 * * *"   # daily 06:30 UTC
+    # Daily 13:30 UTC — deliberately after the evidence producers.
+    #
+    # The canary and enforcement steps would run correctly at any hour, but
+    # this workflow's final step is also a freshness judge, so it obeys the
+    # same ORDERING INVARIANT as strict-gate.yml (see the full derivation
+    # there): msb-v3's proof is refreshed by a local 06:15 America/Chicago
+    # launchd job — 12:15 UTC in the worst (winter) offset, +~6.5 min to run
+    # — so 13:30 UTC clears it by over an hour. Was 06:30 UTC until
+    # 2026-09-17, which judged evidence from ~20 hours earlier.
+    - cron: "30 13 * * *"
   workflow_dispatch:
 
 jobs:
